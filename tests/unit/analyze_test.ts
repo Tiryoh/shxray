@@ -352,6 +352,221 @@ Deno.test("distinct commands, flags, and url operands stay visible", async () =>
   assertStringIncludes(insecure[0]!.detail, "curl -kfSL");
 });
 
+Deno.test("defined die function is not suppressed by its name", async () => {
+  const report = await analyze(`die() { rm -rf /; }; main() { die; }; main`);
+  assertEquals(report.parse.ok, true);
+  assert(
+    report.sideEffects.some((fact) =>
+      fact.kind === "rm-recursive" && fact.severity === "high"
+    ),
+  );
+  assertStringIncludes(
+    flatten(report.flow.steps).join("\n"),
+    "Removes / with rm -rf.",
+  );
+});
+
+Deno.test("forwarding function keeps other actions in the compact flow", async () => {
+  const report = await analyze(
+    `run() { rm -rf /; "$@"; }; run curl https://example.com/file`,
+  );
+  assertEquals(report.parse.ok, true);
+  const flow = flatten(report.flow.steps).join("\n");
+  const removal = flow.indexOf("Removes / with rm -rf.");
+  const download = flow.indexOf(
+    "Downloads https://example.com/file with curl.",
+  );
+  assert(removal !== -1 && download !== -1 && removal < download);
+});
+
+Deno.test("recursive condition does not overflow the flow walk", async () => {
+  const report = await analyze(
+    `f() { if f; then mkdir /tmp/x; fi; }; f`,
+  );
+  assertEquals(report.parse.ok, true);
+  assert(
+    report.installs.some((fact) =>
+      fact.action === "mkdir" && fact.destination === "/tmp/x"
+    ),
+  );
+  assertStringIncludes(
+    flatten(report.flow.steps).join("\n"),
+    "Creates /tmp/x.",
+  );
+});
+
+Deno.test("archive branch collapse keeps a deletion in the same arm", async () => {
+  const report = await analyze(
+    `if [ "$X" = 1 ]; then tar -xf a.tar; rm -rf /; else gzip -dc a.tar | tar -xf -; fi`,
+  );
+  assertEquals(report.parse.ok, true);
+  const flow = flatten(report.flow.steps).join("\n");
+  assertStringIncludes(flow, "removes / with rm -rf.");
+  assertStringIncludes(flow, "a.tar");
+  assert(!flow.includes("tar (or zstd | tar)"));
+});
+
+Deno.test("positional reassignment does not keep a stale URL binding", async () => {
+  const positional = await analyze(
+    `url=https://safe.example/tool; url="$1"; curl "$url"`,
+  );
+  assertEquals(positional.parse.ok, true);
+  assert(
+    !flatten(positional.flow.steps).join("\n").includes("safe.example"),
+  );
+  assert(
+    !positional.summary.sentences.join("\n").includes("safe.example"),
+  );
+  const cleared = await analyze(
+    `url=https://safe.example/tool; url=; curl "$url"`,
+  );
+  assert(!flatten(cleared.flow.steps).join("\n").includes("safe.example"));
+  const once = await analyze(`url=https://safe.example/tool; curl "$url"`);
+  assertStringIncludes(
+    flatten(once.flow.steps).join("\n"),
+    "safe.example",
+  );
+});
+
+Deno.test("header URL bindings are not download hosts", async () => {
+  const report = await analyze(
+    `referer=https://trusted.example/; curl -H "$referer" "$payload"`,
+  );
+  assertEquals(report.parse.ok, true);
+  const summary = report.summary.sentences.join("\n");
+  assert(!summary.includes("trusted.example"));
+  assert(
+    report.network.downloads.every((fact) =>
+      !fact.urls.some((url) => url.includes("trusted.example")) &&
+      !fact.references.some((ref) => ref.includes("referer"))
+    ),
+  );
+  const direct = await analyze(
+    `payload=https://payload.example/file; curl "$payload"`,
+  );
+  assertStringIncludes(
+    direct.summary.sentences.join("\n"),
+    "payload.example",
+  );
+});
+
+Deno.test("checksum and signature tools are not all treated as verification", async () => {
+  const digest = await analyze(`sha256sum /tmp/payload`);
+  assertEquals(digest.network.integrity[0]?.verifies, false);
+  assert(
+    !digest.summary.sentences.some((sentence) =>
+      sentence.includes("verifies integrity")
+    ),
+  );
+  assertStringIncludes(
+    digest.summary.sentences.join("\n"),
+    "Runs sha256sum.",
+  );
+  assertStringIncludes(
+    flatten(digest.flow.steps).join("\n"),
+    "Runs sha256sum on /tmp/payload.",
+  );
+
+  const dearmor = await analyze(`gpg --dearmor key.asc`);
+  assertEquals(dearmor.network.integrity[0]?.verifies, false);
+  const dearmorText = [
+    ...dearmor.summary.sentences,
+    ...flatten(dearmor.flow.steps),
+  ].join("\n");
+  assert(!dearmorText.includes("Verifies a signature"));
+  assert(!dearmorText.includes("verifies integrity"));
+  assertStringIncludes(dearmorText, "Runs gpg on key.asc.");
+
+  const checked = await analyze(`sha256sum -c sums.txt`);
+  assertEquals(checked.network.integrity[0]?.verifies, true);
+  assertStringIncludes(
+    checked.summary.sentences.join("\n"),
+    "Verifies integrity with sha256sum.",
+  );
+  assertStringIncludes(
+    flatten(checked.flow.steps).join("\n"),
+    "Checks a checksum with sha256sum on sums.txt.",
+  );
+
+  const verified = await analyze(`gpg --verify a.asc`);
+  assertEquals(verified.network.integrity[0]?.verifies, true);
+  assertStringIncludes(
+    flatten(verified.flow.steps).join("\n"),
+    "Verifies a signature with gpg on a.asc.",
+  );
+});
+
+Deno.test("delegated curl -k is an insecure download", async () => {
+  const report = await analyze(`run curl -k https://example.com/file`);
+  assertEquals(report.parse.ok, true);
+  assert(
+    report.network.downloads.some((fact) =>
+      fact.tool === "curl" &&
+      fact.urls.includes("https://example.com/file")
+    ),
+  );
+  assert(
+    report.sideEffects.some((fact) =>
+      fact.kind === "insecure-download" && fact.detail.includes("curl -k")
+    ),
+  );
+});
+
+Deno.test("curl --ciphers is not a download target", async () => {
+  const report = await analyze(
+    `curl --ciphers "$_ciphersuites" --location "$1"`,
+  );
+  assertEquals(report.parse.ok, true);
+  const targets = report.network.downloads.flatMap((fact) => [
+    ...fact.urls,
+    ...fact.references,
+  ]);
+  assert(targets.includes('"$1"'));
+  assert(!targets.some((target) => target.includes("ciphersuite")));
+  const rustup = await analyze(await Deno.readTextFile(RUSTUP_URL), {
+    name: "rustup-init.sh",
+  });
+  const rustupCurl = rustup.network.downloads.filter((fact) =>
+    fact.tool === "curl"
+  );
+  assert(rustupCurl.length > 0);
+  assert(
+    rustupCurl.every((fact) =>
+      ![...fact.urls, ...fact.references].some((target) =>
+        target.includes("_ciphersuites")
+      )
+    ),
+  );
+});
+
+Deno.test("wget --ciphers is not a download target", async () => {
+  const report = await analyze(
+    `wget --ciphers "$_ciphersuites" "$1" -O "$2"`,
+  );
+  assertEquals(report.parse.ok, true);
+  const targets = report.network.downloads.flatMap((fact) => [
+    ...fact.urls,
+    ...fact.references,
+  ]);
+  assert(targets.includes('"$1"'));
+  assert(!targets.includes('"$2"'));
+  assert(!targets.some((target) => target.includes("ciphersuite")));
+  const rustup = await analyze(await Deno.readTextFile(RUSTUP_URL), {
+    name: "rustup-init.sh",
+  });
+  const rustupWget = rustup.network.downloads.filter((fact) =>
+    fact.tool === "wget"
+  );
+  assert(rustupWget.length > 0);
+  assert(
+    rustupWget.every((fact) =>
+      ![...fact.urls, ...fact.references].some((target) =>
+        target.includes("_ciphersuites")
+      )
+    ),
+  );
+});
+
 Deno.test("byte offsets survive non-ascii source", async () => {
   const report = await analyze(
     "# こんにちは\ncurl https://example.com/unicode-ok\n",

@@ -519,7 +519,10 @@ function collectBindings(
   file: File,
   functions: Map<string, FunctionInfo>,
 ): Map<string, VarBinding> {
-  const assignValues = new Map<string, { value: string; node: Word }[]>();
+  const assignValues = new Map<
+    string,
+    { value: string; node: Word | null }[]
+  >();
   const paramDefaults = new Map<string, string>();
 
   walk(file, (node: Node) => {
@@ -538,16 +541,14 @@ function collectBindings(
     bindings.set(name, { name, kind: "default", value: def });
   }
 
-  // 2. Single non-empty assignments (ignoring empty resets and positional copies like `url=$1`).
+  // 2. One assignment only. A later positional copy (`url="$1"`) or an
+  // empty reset (`url=`) means the earlier literal is not the value.
   for (const [name, entries] of assignValues) {
     if (IGNORED_BINDING_VARS.has(name)) continue;
-    const meaningful = entries.filter((e) =>
-      e.value !== "" && !/^\$\{?[0-9@*#]\}?$/.test(e.value)
-    );
-    const uniqueValues = [...new Set(meaningful.map((e) => e.value))];
-    if (uniqueValues.length !== 1) continue;
-    const entry = meaningful[0]!;
+    if (entries.length !== 1) continue;
+    const entry = entries[0]!;
     const val = entry.value;
+    if (!entry.node || val === "" || /^\$\{?[0-9@*#]\}?$/.test(val)) continue;
 
     // Ignore numeric flags (`0`/`1`) or empty-default parameter guards (`${VAR:-}`).
     if (/^[01]$/.test(val)) continue;
@@ -620,13 +621,19 @@ function collectBindings(
 function recordAssign(
   source: SourceMap,
   node: Assign,
-  map: Map<string, { value: string; node: Word }[]>,
+  map: Map<string, { value: string; node: Word | null }[]>,
 ): void {
   const name = node.name?.value;
-  if (!name || !node.value) return;
-  const value = displayWord(source, node.value).trim();
+  if (!name) return;
   const list = map.get(name) ?? [];
-  list.push({ value, node: node.value });
+  if (!node.value) {
+    list.push({ value: "", node: null });
+  } else {
+    list.push({
+      value: displayWord(source, node.value).trim(),
+      node: node.value,
+    });
+  }
   map.set(name, list);
 }
 

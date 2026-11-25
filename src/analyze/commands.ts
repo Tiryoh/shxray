@@ -244,6 +244,7 @@ const DOWNLOAD_VALUE_FLAGS: Readonly<Record<string, readonly string[]>> = {
     "--unix-socket",
     "--proto",
     "--proto-redir",
+    "--ciphers",
   ],
   wget: [
     "-O",
@@ -270,6 +271,7 @@ const DOWNLOAD_VALUE_FLAGS: Readonly<Record<string, readonly string[]>> = {
     "--input-file",
     "--base",
     "--limit-rate",
+    "--ciphers",
   ],
   fetch: ["-o", "--output"],
   aria2c: ["-o", "-d", "--out", "--dir"],
@@ -336,6 +338,40 @@ function equalsValue(raw: string): string {
   if (raw !== word) return word.slice(semantic + 1);
   const at = raw.indexOf("=");
   return at === -1 ? "" : raw.slice(at + 1);
+}
+
+const CHECKSUM_TOOLS = new Set([
+  "sha256sum",
+  "sha384sum",
+  "sha512sum",
+  "sha1sum",
+  "md5sum",
+  "shasum",
+  "b2sum",
+]);
+
+/**
+ * True when the invocation checks a checksum or signature.
+ * Digest computation and key conversion are not verification.
+ */
+export function commandVerifies(command: string, args: string[]): boolean {
+  const words = args.map((arg) => unquote(arg));
+  if (CHECKSUM_TOOLS.has(command)) {
+    return words.some((word) =>
+      word === "--check" ||
+      (word.startsWith("-") && !word.startsWith("--") && word.includes("c"))
+    );
+  }
+  if (command === "gpgv") return true;
+  if (command === "gpg") return words.includes("--verify");
+  if (command === "cosign") return words.includes("verify");
+  if (command === "minisign" || command === "signify") {
+    return words.some((word) =>
+      word === "-V" ||
+      (word.startsWith("-") && !word.startsWith("--") && word.includes("V"))
+    );
+  }
+  return false;
 }
 
 export function disablesTlsVerification(

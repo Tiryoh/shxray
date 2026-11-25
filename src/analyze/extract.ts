@@ -14,6 +14,7 @@ import type {
 } from "sh-syntax";
 
 import {
+  commandVerifies,
   disablesTlsVerification,
   flagsFromOptstring,
   optionFlag,
@@ -572,13 +573,23 @@ class Collector {
       this.#onDownload(command, rawArgs, node.start);
     }
     if (CHECKSUMS.has(command) || SIGNATURES.has(command)) {
-      this.#addIntegrity(command, detail, node.start);
+      this.#addIntegrity(
+        command,
+        detail,
+        node.start,
+        commandVerifies(command, args),
+      );
     }
     if (
       command === "openssl" &&
       args.some((arg) => arg === "dgst" || arg.startsWith("-sha"))
     ) {
-      this.#addIntegrity("openssl", detail, node.start);
+      this.#addIntegrity(
+        "openssl",
+        detail,
+        node.start,
+        args.some((arg) => arg === "verify" || arg === "-verify"),
+      );
     }
     if (command === "eval") {
       this.#addSideEffect("eval", dynamicSeverity(detail), detail, node.start);
@@ -650,12 +661,21 @@ class Collector {
       const found = urlsFromOperands(inner, rawRest, this.#assignments);
       if (found.urls.length === 0 && found.references.length === 0) return;
       this.#onDownload(inner, rawRest, node.start);
+      if (disablesTlsVerification(inner, rest)) {
+        this.#addSideEffect(
+          "insecure-download",
+          "medium",
+          oneLine(this.#source, node.start, node.end),
+          node.start,
+        );
+      }
     }
     if (CHECKSUMS.has(inner) || SIGNATURES.has(inner)) {
       this.#addIntegrity(
         inner,
         oneLine(this.#source, node.start, node.end),
         node.start,
+        commandVerifies(inner, rest),
       );
     }
   }
@@ -907,12 +927,17 @@ class Collector {
     this.#privileges.push({ kind, detail, evidence });
   }
 
-  #addIntegrity(tool: string, detail: string, offset: number): void {
+  #addIntegrity(
+    tool: string,
+    detail: string,
+    offset: number,
+    verifies: boolean,
+  ): void {
     const evidence = this.#evidence(offset);
     const key = `sum|${tool}|${evidence.line}`;
     if (this.#seen.has(key)) return;
     this.#seen.add(key);
-    this.#integrity.push({ tool, detail, evidence });
+    this.#integrity.push({ tool, detail, verifies, evidence });
   }
 
   #addSideEffect(

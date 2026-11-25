@@ -18,7 +18,7 @@ import {
   type ScriptMeta,
   type VarBinding,
 } from "./bindings.ts";
-import { unwrapCommand, urlOperands } from "./commands.ts";
+import { commandVerifies, unwrapCommand, urlOperands } from "./commands.ts";
 import { joinAnd, joinClauses, joinOr } from "./locale.ts";
 import { subjectLooksLikePlatform } from "./platforms.ts";
 import { oneLine, type SourceMap } from "./source.ts";
@@ -562,7 +562,6 @@ class FlowBuilder {
       }
       return [];
     }
-    if (PRINTERS.has(name)) return [];
 
     if (info.forwards) {
       this.#expanded.add(name);
@@ -575,7 +574,22 @@ class FlowBuilder {
         line,
       );
       if (this.#mode === "compact") {
-        return delegated ? [delegated] : [];
+        // A wrapper that also deletes or writes must keep those actions.
+        // Large wrappers are expanded once so repeated calls do not exhaust
+        // the step budget; each call still shows the forwarded command.
+        const bodyKey = `forward-body:${name}`;
+        const showBody = !stack.includes(name) &&
+          (info.stmts.length <= 12 || !this.#expanded.has(bodyKey));
+        this.#expanded.add(bodyKey);
+        const bodySteps = showBody
+          ? this.#walk(
+            info.stmts,
+            [...stack, name],
+            buildCallScope(info, args, rawArgs),
+          )
+          : [];
+        if (delegated) bodySteps.push(delegated);
+        return bodySteps;
       }
       const already = this.#expanded.has(`detailed:${name}`);
       if (already) {
@@ -857,27 +871,61 @@ class FlowBuilder {
     if (CHECKSUMS.has(command)) {
       const target = lastOperand(args);
       const annotated = target ? this.#annotateTarget(clip(target, 80)) : null;
-      return {
-        text: this.#ja
-          ? (annotated
-            ? `${command} で ${annotated} のチェックサムを検証。`
-            : `${command} でチェックサムを検証。`)
-          : (annotated
+      const verifies = commandVerifies(command, args);
+      if (this.#ja) {
+        if (verifies) {
+          return {
+            text: annotated
+              ? `${command} で ${annotated} のチェックサムを検証。`
+              : `${command} でチェックサムを検証。`,
+          };
+        }
+        return {
+          text: annotated
+            ? `${command} で ${annotated} を実行。`
+            : `${command} を実行。`,
+        };
+      }
+      if (verifies) {
+        return {
+          text: annotated
             ? `Checks a checksum with ${command} on ${annotated}.`
-            : `Checks a checksum with ${command}.`),
+            : `Checks a checksum with ${command}.`,
+        };
+      }
+      return {
+        text: annotated
+          ? `Runs ${command} on ${annotated}.`
+          : `Runs ${command}.`,
       };
     }
     if (SIGNATURES.has(command)) {
       const operands = args.filter((arg) => !arg.startsWith("-"));
       const first = operands[0] ? clip(operands[0], 80) : null;
-      return {
-        text: this.#ja
-          ? (first
-            ? `${command} で ${first} の署名を検証。`
-            : `${command} で署名を検証。`)
-          : (first
+      const verifies = commandVerifies(command, args);
+      if (this.#ja) {
+        if (verifies) {
+          return {
+            text: first
+              ? `${command} で ${first} の署名を検証。`
+              : `${command} で署名を検証。`,
+          };
+        }
+        return {
+          text: first
+            ? `${command} で ${first} を実行。`
+            : `${command} を実行。`,
+        };
+      }
+      if (verifies) {
+        return {
+          text: first
             ? `Verifies a signature with ${command} on ${first}.`
-            : `Verifies a signature with ${command}.`),
+            : `Verifies a signature with ${command}.`,
+        };
+      }
+      return {
+        text: first ? `Runs ${command} on ${first}.` : `Runs ${command}.`,
       };
     }
     if (command === "tar" || command === "unzip" || command === "gunzip") {
@@ -1515,15 +1563,6 @@ class FlowBuilder {
           name === ":" || name === "true" || name === "false"
         ) {
           continue;
-        }
-        const fnInfo = this.#meta.functions.get(name);
-        if (fnInfo && this.#mode === "compact") {
-          const trial = this.#walk(
-            fnInfo.stmts,
-            [...stack, name],
-            emptyScope(),
-          );
-          if (trial.length === 0) continue;
         }
         if (
           DOWNLOADERS.has(name) || PACKAGE_MANAGERS.has(name) ||
@@ -2218,6 +2257,15 @@ function collectDownloadTags(
   return [];
 }
 
+function leafDrafts(steps: DraftStep[]): DraftStep[] {
+  const leaves: DraftStep[] = [];
+  for (const step of steps) {
+    if (step.children.length === 0) leaves.push(step);
+    else leaves.push(...leafDrafts(step.children));
+  }
+  return leaves;
+}
+
 function countLeafSteps(steps: DraftStep[]): number {
   let total = 0;
   for (const step of steps) {
@@ -2234,12 +2282,25 @@ function tryCollapseArchiveBranch(
 ): DraftStep | null {
   const nonEmpty = arms.filter((arm) => arm.steps.length > 0);
   if (nonEmpty.length !== 2) return null;
-  const leafTags = nonEmpty.map((arm) =>
-    arm.steps.map((s) => s.tag).filter((t) => t !== undefined)
-  );
-  const pipeTag = leafTags.flat().find((t) => t.kind === "archive-pipe");
-  const tarTag = leafTags.flat().find((t) => t.kind === "archive-tar");
-  if (!pipeTag || !tarTag) return null;
+  const armLeaves = nonEmpty.map((arm) => leafDrafts(arm.steps));
+  if (armLeaves.some((leaves) => leaves.length !== 1)) return null;
+  const tags = armLeaves.map((leaves) => leaves[0]?.tag);
+  if (
+    tags.some((tag) =>
+      tag?.kind !== "archive-pipe" && tag?.kind !== "archive-tar"
+    )
+  ) {
+    return null;
+  }
+  const pipeTag = armLeaves.find((leaves) =>
+    leaves[0]?.tag?.kind === "archive-pipe"
+  )?.[0]?.tag;
+  const tarTag = armLeaves.find((leaves) =>
+    leaves[0]?.tag?.kind === "archive-tar"
+  )?.[0]?.tag;
+  if (pipeTag?.kind !== "archive-pipe" || tarTag?.kind !== "archive-tar") {
+    return null;
+  }
   const target = pipeTag.target ?? tarTag.target ??
     (locale === "ja" ? "アーカイブ" : "archive");
   return {
@@ -2623,6 +2684,21 @@ function writeSentence(
   return capitalize(`also writes ${joinAnd(destinations, "en")}.`);
 }
 
+function referencedBindingNames(downloads: DownloadFact[]): Set<string> {
+  const names = new Set<string>();
+  for (const download of downloads) {
+    for (const operand of download.references) {
+      const bare = unquote(operand).trim();
+      const match = bare.match(
+        /^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$|^\$([A-Za-z_][A-Za-z0-9_]*)$/,
+      );
+      const name = match?.[1] ?? match?.[2];
+      if (name) names.add(name);
+    }
+  }
+  return names;
+}
+
 function networkSentence(
   downloads: DownloadFact[],
   integrity: IntegrityFact[],
@@ -2636,16 +2712,25 @@ function networkSentence(
     const match = url.match(/^https?:\/\/([^/\s"'`$]+)/);
     if (match?.[1]) hosts.add(match[1]);
   };
+  const referenced = referencedBindingNames(downloads);
   for (const d of downloads) {
     for (const url of d.urls) extractHost(url);
   }
   for (const binding of bindings.values()) {
+    if (!referenced.has(binding.name)) continue;
     if (binding.kind === "url-helper" || binding.kind === "value") {
       extractHost(binding.value);
     }
   }
   const hostList = [...hosts].sort();
-  const checkTools = unique(integrity.map((i) => i.tool)).sort();
+  const verifyingTools = unique(
+    integrity.filter((fact) => fact.verifies).map((fact) => fact.tool),
+  ).sort();
+  const otherTools = unique(
+    integrity.filter((fact) => !verifyingTools.includes(fact.tool)).map((
+      fact,
+    ) => fact.tool),
+  ).sort();
 
   if (locale === "ja") {
     const parts: string[] = [];
@@ -2658,8 +2743,11 @@ function networkSentence(
           : `${joinOr(tools, "ja")} でファイルをダウンロード`,
       );
     }
-    if (checkTools.length > 0) {
-      parts.push(`${joinAnd(checkTools, "ja")} で整合性を検証`);
+    if (verifyingTools.length > 0) {
+      parts.push(`${joinAnd(verifyingTools, "ja")} で整合性を検証`);
+    }
+    if (otherTools.length > 0) {
+      parts.push(`${joinAnd(otherTools, "ja")} を実行`);
     }
     return parts.length > 0 ? `${joinClauses(parts, "ja")}します。` : null;
   }
@@ -2674,8 +2762,11 @@ function networkSentence(
         : `downloads files with ${joinOr(tools, "en")}`,
     );
   }
-  if (checkTools.length > 0) {
-    parts.push(`verifies integrity with ${joinAnd(checkTools, "en")}`);
+  if (verifyingTools.length > 0) {
+    parts.push(`verifies integrity with ${joinAnd(verifyingTools, "en")}`);
+  }
+  if (otherTools.length > 0) {
+    parts.push(`runs ${joinAnd(otherTools, "en")}`);
   }
   return parts.length > 0 ? capitalize(joinAnd(parts, "en")) + "." : null;
 }

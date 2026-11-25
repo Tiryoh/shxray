@@ -87,6 +87,8 @@ export interface DownloadFact {
 
 export interface IntegrityFact {
   tool: string;
+  /** True when the invocation checks a checksum or signature. */
+  verifies: boolean;
   detail: string;
   evidence: Evidence;
 }
