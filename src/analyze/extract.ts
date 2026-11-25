@@ -81,7 +81,21 @@ const APPEND_REDIRS = new Set<number>([
 ]);
 
 const SHELLS = new Set(["sh", "bash", "dash", "ash", "zsh", "ksh", "mksh"]);
-const PRINTERS = new Set(["echo", "printf", "warn", "error", "die", "say"]);
+const PRINTERS = new Set([
+  "echo",
+  "printf",
+  "warn",
+  "error",
+  "die",
+  "say",
+  "info",
+  "debug",
+  "log",
+  "msg",
+  "notice",
+  "trace",
+  "usage",
+]);
 const DOWNLOADERS = new Set(["curl", "wget", "fetch", "aria2c", "axel"]);
 const CHECKSUMS = new Set([
   "sha256sum",
@@ -197,8 +211,12 @@ export interface ExtractedFacts {
   sideEffects: SideEffectFact[];
 }
 
-export function extractFacts(source: SourceMap, file: File): ExtractedFacts {
-  const collector = new Collector(source);
+export function extractFacts(
+  source: SourceMap,
+  file: File,
+  printerNames: ReadonlySet<string> = new Set(),
+): ExtractedFacts {
+  const collector = new Collector(source, printerNames);
   walk(file, (node) => {
     if (node.type === "Assign") collector.noteUnameAssignment(node);
   });
@@ -210,6 +228,7 @@ export function extractFacts(source: SourceMap, file: File): ExtractedFacts {
 
 class Collector {
   readonly #source: SourceMap;
+  readonly #printerNames: ReadonlySet<string>;
   readonly #os = new Set<string>();
   readonly #arch = new Set<string>();
   readonly #detections: PlatformDetection[] = [];
@@ -226,8 +245,9 @@ class Collector {
   /** Names whose first uname assignment still describes the value. */
   readonly #unameDerived = new Map<string, PlatformCategory>();
 
-  constructor(source: SourceMap) {
+  constructor(source: SourceMap, printerNames: ReadonlySet<string>) {
     this.#source = source;
+    this.#printerNames = printerNames;
   }
 
   noteUnameAssignment(node: Assign): void {
@@ -548,7 +568,9 @@ class Collector {
     }
     this.#onInstallCommand(command, args, node.start);
     this.#onBracket(command, args, detail, node.start);
-    if (!PRINTERS.has(command)) this.#onDelegated(command, args, rawArgs, node);
+    if (!PRINTERS.has(command) && !this.#printerNames.has(command)) {
+      this.#onDelegated(command, args, rawArgs, node);
+    }
   }
 
   #onDelegated(

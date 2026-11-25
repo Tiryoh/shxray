@@ -89,7 +89,7 @@ export function platformCategoryFromSubject(subject: string): PlatformCategory {
 
 export function subjectLooksLikePlatform(subject: string): boolean {
   const text = subject.toLowerCase();
-  return /uname|ostype|host_os|os_name/.test(text) ||
+  return /uname|ostype|host_os|os_name|kernel/.test(text) ||
     /\$\{?os\b/.test(text) ||
     /\$\{?arch\b/.test(text);
 }

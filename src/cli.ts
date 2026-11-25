@@ -1,5 +1,6 @@
 import { analyze } from "./analyze/analyze.ts";
-import type { ShellVariant } from "./analyze/types.ts";
+import { parseLocale } from "./analyze/locale.ts";
+import type { Locale, ShellVariant } from "./analyze/types.ts";
 import { escapeControls } from "./render/escape.ts";
 import { renderJson } from "./render/json.ts";
 import { renderTerminal } from "./render/terminal.ts";
@@ -12,14 +13,15 @@ Usage:
   curl -fsSL https://example.com/install.sh | shxray
 
 Options:
-  --json        Print the versioned analysis report as JSON
-  --verbose     After the summary and flow, print per-category details
-  --plain       Plain text, without color
-  --no-color    Same as --plain
-  --posix       Parse as POSIX sh (default: bash)
-  --bash        Parse as bash (default)
-  -h, --help    Show this help
-  -V, --version Show the version
+  --json          Print the versioned analysis report as JSON
+  --verbose       After the summary and flow, print detailed flow and category details
+  --lang <en|ja>  Output language (default: from LC_ALL, LC_MESSAGES, or LANG)
+  --plain         Plain text, without color
+  --no-color      Same as --plain
+  --posix         Parse as POSIX sh (default: bash)
+  --bash          Parse as bash (default)
+  -h, --help      Show this help
+  -V, --version   Show the version
 
 The script is never executed. With no file, shxray reads stdin.
 If stdin is a terminal, pass a file path instead.
@@ -35,6 +37,7 @@ interface Flags {
   verbose: boolean;
   plain: boolean;
   variant: ShellVariant;
+  lang: Locale | undefined;
   help: boolean;
   version: boolean;
   file: string | undefined;
@@ -74,11 +77,16 @@ export async function main(argv: string[] = Deno.args): Promise<void> {
     Deno.exit(1);
   }
 
-  const report = await analyze(source, { name, variant: flags.variant });
+  const locale = resolveLocale(flags.lang);
+  const report = await analyze(source, {
+    name,
+    variant: flags.variant,
+    locale,
+  });
   const color = flags.json ? false : colorEnabled(flags.plain);
   const rendered = flags.json
     ? renderJson(report)
-    : renderTerminal(report, { color, verbose: flags.verbose });
+    : renderTerminal(report, { color, verbose: flags.verbose, locale });
   await Deno.stdout.write(new TextEncoder().encode(rendered));
 
   if (!report.parse.ok) {
@@ -99,6 +107,7 @@ function parseArgs(argv: string[]): Flags {
     verbose: false,
     plain: false,
     variant: "bash",
+    lang: undefined,
     help: false,
     version: false,
     file: undefined,
@@ -115,7 +124,12 @@ function parseArgs(argv: string[]): Flags {
     else if (arg === "--plain" || arg === "--no-color") flags.plain = true;
     else if (arg === "--posix") flags.variant = "posix";
     else if (arg === "--bash") flags.variant = "bash";
-    else if (arg === "-h" || arg === "--help") flags.help = true;
+    else if (arg === "--lang") {
+      const value = argv[++index];
+      flags.lang = parseLangFlag(value);
+    } else if (arg.startsWith("--lang=")) {
+      flags.lang = parseLangFlag(arg.slice("--lang=".length));
+    } else if (arg === "-h" || arg === "--help") flags.help = true;
     else if (arg === "-V" || arg === "--version") flags.version = true;
     else if (arg === "-") rest.push(arg);
     else if (arg.startsWith("-")) throw new Error(`unknown option: ${arg}`);
@@ -124,6 +138,35 @@ function parseArgs(argv: string[]): Flags {
   if (rest.length > 1) throw new Error("too many file arguments");
   flags.file = rest[0];
   return flags;
+}
+
+function parseLangFlag(value: string | undefined): Locale {
+  if (!value) throw new Error("--lang requires a value (en or ja)");
+  const lower = value.trim().toLowerCase();
+  if (lower === "en" || lower.startsWith("en_") || lower.startsWith("en-")) {
+    return "en";
+  }
+  if (lower === "ja" || lower.startsWith("ja_") || lower.startsWith("ja-")) {
+    return "ja";
+  }
+  throw new Error(`unsupported language: ${value} (expected en or ja)`);
+}
+
+function resolveLocale(explicit: Locale | undefined): Locale {
+  if (explicit) return explicit;
+  const permission = Deno.permissions.querySync({ name: "env" });
+  if (permission.state !== "granted") return "en";
+  for (const key of ["LC_ALL", "LC_MESSAGES", "LANG"]) {
+    const value = Deno.env.get(key);
+    if (value && value.trim().length > 0) return parseLocale(value) ?? "en";
+  }
+  const language = Deno.env.get("LANGUAGE");
+  if (language) {
+    const first = language.split(":")[0];
+    const parsed = parseLocale(first);
+    if (parsed) return parsed;
+  }
+  return "en";
 }
 
 async function readInput(

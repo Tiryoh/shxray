@@ -13,10 +13,21 @@ interface RunResult {
   stderr: string;
 }
 
-async function runCli(args: string[], stdin?: string): Promise<RunResult> {
+async function runCli(
+  args: string[],
+  stdin?: string,
+  envOverrides: Record<string, string> = {},
+): Promise<RunResult> {
   const command = new Deno.Command(Deno.execPath(), {
     args: ["run", "--allow-read", "--allow-env", CLI.pathname, ...args],
     cwd: new URL("../..", import.meta.url).pathname,
+    env: {
+      LC_ALL: "",
+      LC_MESSAGES: "",
+      LANG: "C",
+      LANGUAGE: "",
+      ...envOverrides,
+    },
     stdin: stdin === undefined ? "null" : "piped",
     stdout: "piped",
     stderr: "piped",
@@ -193,4 +204,36 @@ Deno.test("the input script is not executed", async () => {
     else throw error;
   }
   assertEquals(created, false);
+});
+
+Deno.test("locale follows LANG / LC_ALL and --lang overrides env", async () => {
+  const fromLang = await runCli([FIXTURE.pathname], undefined, {
+    LANG: "ja_JP.UTF-8",
+    LANGUAGE: "en_US:en",
+  });
+  assertEquals(fromLang.code, 0, fromLang.stderr);
+  assertStringIncludes(fromLang.stdout, "要約");
+  assertStringIncludes(fromLang.stdout, "処理の流れ");
+  assertStringIncludes(fromLang.stdout, "静的解析のみ");
+
+  const overrideEn = await runCli(
+    ["--lang", "en", FIXTURE.pathname],
+    undefined,
+    {
+      LC_ALL: "ja_JP.UTF-8",
+    },
+  );
+  assertEquals(overrideEn.code, 0, overrideEn.stderr);
+  assertStringIncludes(overrideEn.stdout, "Summary");
+  assertStringIncludes(overrideEn.stdout, "Flow");
+
+  const flagJa = await runCli(["--lang=ja", ROS.pathname], undefined, {
+    LANG: "C",
+  });
+  assertEquals(flagJa.code, 0, flagJa.stderr);
+  assertStringIncludes(flagJa.stdout, "処理の流れ（入口: main）");
+
+  const badLang = await runCli(["--lang", "fr", FIXTURE.pathname]);
+  assertEquals(badLang.code, 1);
+  assertStringIncludes(badLang.stderr, "unsupported language");
 });

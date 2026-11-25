@@ -107,10 +107,16 @@ Deno.test("installer fixture extracts platforms, options, paths, and risk", asyn
     report.summary.sentences.some((sentence) => sentence.includes("sudo")),
   );
   const installerFlow = flatten(report.flow.steps).join("\n");
-  const downloadAt = installerFlow.indexOf('Downloads "$URL" with curl.');
-  const installAt = installerFlow.indexOf("installs to $PREFIX/bin/tool.");
+  const downloadAt = installerFlow.indexOf('Downloads "$URL"');
+  const installAt = installerFlow.indexOf("installs to $PREFIX/bin/tool");
   assert(downloadAt !== -1 && installAt !== -1 && downloadAt < installAt);
+  assertStringIncludes(
+    installerFlow,
+    "https://example.com/tool/releases/download/",
+  );
+  assertStringIncludes(installerFlow, "PREFIX default: /usr/local");
   assertEquals(report.flow.note, null);
+  assert(report.flow.detailed && report.flow.detailed.length > 0);
 });
 
 Deno.test("mise excerpt keeps uname comparisons and written URLs", async () => {
@@ -204,10 +210,16 @@ Deno.test("get-ros2 fixture reads uname into a later case", async () => {
   assert(
     report.summary.sentences.some((sentence) => sentence.includes("sudo")),
   );
+  assertEquals(report.flow.entry, "main");
   const rosFlow = flatten(report.flow.steps).join("\n");
-  assert(rosFlow.includes("Calls main."));
-  assert(rosFlow.includes("Updates package indexes with apt-get."));
-  assert(rosFlow.includes("not known statically"));
+  assertStringIncludes(rosFlow, "Parses CLI options");
+  assertStringIncludes(rosFlow, "updates package indexes with apt-get.");
+  assertStringIncludes(rosFlow, "ros-$DISTRO-$VARIANT");
+  assertStringIncludes(rosFlow, "sh -c");
+  assert(!rosFlow.includes("already expanded"));
+  const rosDetailed = flatten(report.flow.detailed ?? []).join("\n");
+  assertStringIncludes(rosDetailed, "Calls main.");
+  assertStringIncludes(rosDetailed, "not known statically");
   assertEquals(report.flow.note, null);
 });
 
@@ -375,4 +387,126 @@ Deno.test("posix variant parses a portable script", async () => {
   assertEquals(report.parse.ok, true);
   assertEquals(report.parse.variant, "posix");
   assertEquals(report.summary.risk, "info");
+});
+
+Deno.test("compact flow suppresses printers, collapses fallbacks, and annotates bindings", async () => {
+  const script = `#!/bin/sh
+set -eu
+info() { echo "tool: $*"; }
+debug() { if [ "\${TOOL_DEBUG:-}" = "1" ]; then echo "debug: $*"; fi; }
+error() { echo "err: $*" >&2; exit 1; }
+
+github_url() {
+  echo "https://github.com/example/tool/releases/download/\$1/\$2"
+}
+
+mirror_url() {
+  echo "https://mirror.example.com/\$1/\$2"
+}
+
+download_file() {
+  url="\$1"
+  dir="\$2"
+  file="\$dir/archive"
+  if command -v curl >/dev/null 2>&1; then
+    debug curl -fsSL "\$url"
+    curl -fsSL -o "\$file" "\$url" || return 1
+  else
+    if command -v wget >/dev/null 2>&1; then
+      debug wget -qO "\$file" "\$url"
+      stderr=\$(mktemp)
+      if ! wget -O "\$file" "\$url" >"\$stderr" 2>&1; then
+        rm -f "\$stderr"
+        return 1
+      fi
+      rm "\$stderr"
+    else
+      error "need curl or wget"
+    fi
+  fi
+}
+
+get_checksum() {
+  if [ "\$version" = "1.0" ]; then
+    if [ "\$os" = "linux" ]; then
+      if [ "\$arch" = "x64" ]; then echo "aaa"; elif [ "\$arch" = "arm64" ]; then echo "bbb"; fi
+    fi
+  else
+    fetch_text "\$1/SHASUMS256.txt" | select_checksum "\$2"
+  fi
+}
+
+install_tool() {
+  install_path="\${TOOL_INSTALL_PATH:-\$HOME/.local/bin/tool}"
+  install_dir="\$(dirname "\$install_path")"
+  primary="\$(github_url "\$version" "tool.tar.zst")"
+  backup="\$(mirror_url "\$version" "tool.tar.zst")"
+  download_dir="\$(mktemp -d)"
+  if ! cache_file=\$(download_file "\$primary" "\$download_dir"); then
+    info "retrying mirror"
+    cache_file=\$(download_file "\$backup" "\$download_dir")
+  fi
+  checksum="\$(get_checksum "\$base" "tool.tar.zst")"
+  mkdir -p "\$install_dir"
+  rm -f "\$install_path"
+  if [ "\$(id -u)" = "0" ]; then
+    chmod 755 "\$download_dir/tool"
+  fi
+  mv "\$download_dir/tool" "\$install_path"
+  rm -rf "\$download_dir"
+  info "installed"
+}
+
+after_finish_help() {
+  case "\${SHELL:-}" in
+    */zsh) info "zsh" ;;
+    */bash) info "bash" ;;
+    *) info "other" ;;
+  esac
+}
+
+install_tool
+if [ "\${TOOL_HELP-}" != 0 ]; then
+  after_finish_help
+fi
+`;
+  const report = await analyze(script, { name: "tool-install.sh" });
+  assertEquals(report.parse.ok, true);
+  assertEquals(report.flow.entry, "install_tool");
+
+  // Debug logger calls must not be misclassified as downloads.
+  assert(
+    report.network.downloads.every((d) =>
+      !d.evidence.snippet.includes("debug ")
+    ),
+  );
+
+  // Summary annotates $install_path default and $install_dir dirname.
+  const summaryText = report.summary.sentences.join("\n");
+  assertStringIncludes(
+    summaryText,
+    "$install_path (default: $HOME/.local/bin/tool)",
+  );
+  assertStringIncludes(summaryText, "$install_dir (dirname of $install_path)");
+
+  // Compact flow is concise and readable without printer or boilerplate spam.
+  const flowText = flatten(report.flow.steps).join("\n");
+  assert(!flowText.includes("Calls info"));
+  assert(!flowText.includes("Calls debug"));
+  assert(!flowText.includes("Which path runs is not known statically."));
+  assert(!flowText.includes("already expanded"));
+  assertStringIncludes(flowText, "with curl or wget");
+  assertStringIncludes(
+    flowText,
+    "https://github.com/example/tool/releases/download/",
+  );
+  assertStringIncludes(flowText, "On failure:");
+  assertStringIncludes(flowText, "https://mirror.example.com/");
+  assertStringIncludes(flowText, "selects value by");
+  assertStringIncludes(
+    flowText,
+    "If root (id -u = 0): changes permissions on $download_dir/tool (chmod 755).",
+  );
+  assertStringIncludes(flowText, "Removes $download_dir with rm -rf.");
+  assertStringIncludes(flowText, "[after_finish_help] Prints messages");
 });

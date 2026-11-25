@@ -1,12 +1,15 @@
 export { analyze } from "./analyze.ts";
 export type { AnalyzeOptions } from "./analyze.ts";
+export { parseLocale } from "./locale.ts";
 export type {
   AnalysisReport,
   DownloadFact,
   EnvFact,
   Evidence,
+  FlowStep,
   InstallFact,
   IntegrityFact,
+  Locale,
   OptionFact,
   PlatformDetection,
   PrivilegeFact,

@@ -11,6 +11,8 @@ export type Severity = "info" | "low" | "medium" | "high";
 
 export type ShellVariant = "bash" | "posix";
 
+export type Locale = "en" | "ja";
+
 export interface Evidence {
   /** 1-based line number. */
   line: number;
@@ -121,6 +123,8 @@ export interface FlowStep {
 
 export interface AnalysisReport {
   version: typeof REPORT_VERSION;
+  /** Display language used for prose fields (sentences, flow, notes). */
+  locale?: Locale;
   tool: {
     name: "shxray";
     version: string;
@@ -163,9 +167,14 @@ export interface AnalysisReport {
    * the top level. Branches are listed, not chosen.
    */
   flow: {
+    /** Entry function promoted to the top level of `steps`, when one exists. */
+    entry?: string | null;
     /** Set when the top level does not call the functions it defines. */
     note: string | null;
+    /** Concise, side-effect-focused steps for default display. */
     steps: FlowStep[];
+    /** Detailed call and branch tree (shown with --verbose). */
+    detailed?: FlowStep[];
   };
   platforms: {
     /** Canonical names. `amd64` and `arm64` fold into `x86_64` and `aarch64`. */

@@ -50,7 +50,8 @@ deno task compile
 | Flag | Description |
 | --- | --- |
 | `--json` | Print the versioned analysis report as JSON |
-| `--verbose` | After the summary and flow, print the per-category details |
+| `--verbose` | After the summary and flow, print the detailed flow and per-category details |
+| `--lang <en\|ja>` | Output language (`en` or `ja`). Defaults to `LC_ALL`, `LC_MESSAGES`, or `LANG` (`ja*` selects Japanese, otherwise English) |
 | `--plain`, `--no-color` | Plain text. Also implied when stdout is not a terminal, or when `NO_COLOR` is set to a non-empty value |
 | `--bash` | Parse as Bash (default) |
 | `--posix` | Parse as POSIX sh |
@@ -70,7 +71,7 @@ stdin is reserved for the script.
 - `source` — name, size, line count, shebang
 - `parse` — language variant and the first syntax error, if any
 - `summary` — `info` / `low` / `medium` / `high`, a one-line headline, and `sentences` (what is installed, where, whether root is used, and which OS and architecture names were recognized)
-- `flow` — ordered steps from the top of the script. Literal function calls are nested. `flow.note` is set when the top level does not call the functions it defines. `steps[].unresolved` is set when a branch was listed rather than chosen
+- `flow` — concise, side-effect-focused steps in execution order (`flow.steps`), with `flow.entry` set when a single top-level entry function is unwrapped and `flow.detailed` holding the fuller call/branch tree for `--verbose`. `flow.note` is set when the top level does not call the functions it defines
 - `platforms` — normalized OS and architecture names, and the `uname`, `case`, `$OSTYPE`, and `uname`-derived comparisons that produced them
 - `interface` — CLI flags and environment variables, with defaults when they are written as literals or `${VAR:-default}` / `${VAR:=default}`
 - `installs` — destinations of `install`, `cp`, `mv`, `ln`, `mkdir`, `tee`, and file redirects other than standard streams and `/dev/null`

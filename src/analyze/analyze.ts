@@ -1,9 +1,16 @@
 import { LangVariant, parse } from "sh-syntax";
 
+import { analyzeScriptMeta } from "./bindings.ts";
 import { extractFacts } from "./extract.ts";
 import { buildFlow, summarySentences } from "./flow.ts";
+import { analysisNotes } from "./locale.ts";
 import { shebangOf, SourceMap } from "./source.ts";
-import type { AnalysisReport, Severity, ShellVariant } from "./types.ts";
+import type {
+  AnalysisReport,
+  Locale,
+  Severity,
+  ShellVariant,
+} from "./types.ts";
 import { REPORT_VERSION } from "./types.ts";
 import { VERSION } from "../version.ts";
 
@@ -12,44 +19,65 @@ export interface AnalyzeOptions {
   name?: string;
   /** Shell language. Defaults to bash. */
   variant?: ShellVariant;
+  /** Language for human-readable prose fields. Defaults to `"en"`. */
+  locale?: Locale;
 }
-
-const NOTES = [
-  "Static analysis only; the script was not executed.",
-  "Every branch and function body is inspected. Reachability is not computed.",
-  "Dynamic values are shown as written, including download URL arguments. Defaults are reported for literals and for ${VAR:-default} / ${VAR:=default}.",
-  "Operating system and architecture names are normalized (amd64 -> x86_64, arm64 -> aarch64).",
-  "The flow follows literal function calls from the top level and lists every branch. It does not decide which branch runs.",
-];
 
 export async function analyze(
   sourceText: string,
   options: AnalyzeOptions = {},
 ): Promise<AnalysisReport> {
   const variant = options.variant ?? "bash";
+  const locale: Locale = options.locale ?? "en";
   const source = new SourceMap(sourceText);
   const parsed = await parseScript(sourceText, variant);
-  const facts = parsed.file ? extractFacts(source, parsed.file) : emptyFacts();
-  const flow = parsed.file ? buildFlow(source, parsed.file) : {
-    note: "The script did not parse, so no execution flow was built.",
-    steps: [],
-    packageManagers: [],
-    installsDeb: false,
-  };
+  const meta = parsed.file ? analyzeScriptMeta(source, parsed.file) : null;
+  const printerNames = new Set(
+    meta
+      ? [...meta.functions.values()].filter((fn) => fn.isPrinter).map((fn) =>
+        fn.name
+      )
+      : [],
+  );
+  const facts = parsed.file
+    ? extractFacts(source, parsed.file, printerNames)
+    : emptyFacts();
+  const flow = parsed.file && meta
+    ? buildFlow(source, parsed.file, meta, locale)
+    : {
+      entry: null,
+      note: locale === "ja"
+        ? "スクリプトの構文解析に失敗したため、処理の流れを作成できませんでした。"
+        : "The script did not parse, so no execution flow was built.",
+      steps: [],
+      detailed: [],
+      packageManagers: [],
+      installsDeb: false,
+      bindings: new Map(),
+    };
   const summary = summarize(
     facts,
-    parsed.ok
-      ? summarySentences(facts, flow)
-      : ["The script did not parse, so no install summary was built."],
+    parsed.ok ? summarySentences(facts, flow, locale) : [
+      locale === "ja"
+        ? "スクリプトの構文解析に失敗したため、要約を作成できませんでした。"
+        : "The script did not parse, so no install summary was built.",
+    ],
   );
-  const notes = [...NOTES];
+  const notes = analysisNotes(locale);
   if (!parsed.ok) {
-    notes.unshift("The script did not parse, so no facts were extracted.");
+    notes.unshift(
+      locale === "ja"
+        ? "スクリプトの構文解析に失敗したため、項目を抽出できませんでした。"
+        : "The script did not parse, so no facts were extracted.",
+    );
   }
-  if (sourceText.length === 0) notes.push("Input is empty.");
+  if (sourceText.length === 0) {
+    notes.push(locale === "ja" ? "入力が空です。" : "Input is empty.");
+  }
 
   return {
     version: REPORT_VERSION,
+    locale,
     tool: { name: "shxray", version: VERSION },
     source: {
       name: options.name ?? "<script>",
@@ -63,7 +91,12 @@ export async function analyze(
       error: parsed.error,
     },
     summary,
-    flow: { note: flow.note, steps: flow.steps },
+    flow: {
+      entry: flow.entry,
+      note: flow.note,
+      steps: flow.steps,
+      detailed: flow.detailed,
+    },
     platforms: {
       operatingSystems: facts.operatingSystems,
       architectures: facts.architectures,
