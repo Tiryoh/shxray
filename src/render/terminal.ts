@@ -1,4 +1,5 @@
 import type { AnalysisReport, Evidence, Severity } from "../analyze/types.ts";
+import { escapeControls } from "./escape.ts";
 
 export interface TerminalOptions {
   color?: boolean;
@@ -11,9 +12,13 @@ export function renderTerminal(
   const paint = theme(options.color === true);
   const lines: string[] = [];
   lines.push(
-    `${paint.bold("shxray")} ${report.tool.version}  ${report.source.name}`,
+    `${paint.bold("shxray")} ${report.tool.version}  ${
+      safe(report.source.name)
+    }`,
   );
-  if (report.source.shebang) lines.push(`shebang: ${report.source.shebang}`);
+  if (report.source.shebang) {
+    lines.push(`shebang: ${safe(report.source.shebang)}`);
+  }
   if (report.parse.ok) {
     lines.push(`parse: ok (${report.parse.variant})`);
   } else {
@@ -23,7 +28,7 @@ export function renderTerminal(
       const where = error.line
         ? `line ${error.line}, column ${error.column ?? 1}`
         : "unknown position";
-      lines.push(`  ${where}  ${error.message}`);
+      lines.push(`  ${where}  ${safe(error.message)}`);
     }
   }
   lines.push(`risk: ${paint.risk(report.summary.risk, report.summary.risk)}`);
@@ -41,12 +46,14 @@ export function renderTerminal(
   } else {
     for (const detection of report.platforms.detections) {
       const values = detection.values.length > 0
-        ? `  values ${detection.values.join(", ")}`
+        ? `  values ${detection.values.map(safe).join(", ")}`
         : "";
       lines.push(
         `    - ${
           at(detection.evidence)
-        }  ${detection.kind}  ${detection.category}  ${detection.subject}${values}`,
+        }  ${detection.kind}  ${detection.category}  ${
+          safe(detection.subject)
+        }${values}`,
       );
     }
   }
@@ -57,7 +64,9 @@ export function renderTerminal(
   for (const option of report.interface.options) {
     const value = option.takesValue ? "  takes a value" : "";
     lines.push(
-      `  - ${at(option.evidence)}  ${option.flags.join(", ")}${value}`,
+      `  - ${at(option.evidence)}  ${
+        option.flags.map(safe).join(", ")
+      }${value}`,
     );
   }
   lines.push("");
@@ -68,12 +77,12 @@ export function renderTerminal(
     const fallback = variable.defaultValue === null
       ? "no default detected"
       : `default ${
-        variable.defaultValue === "" ? '""' : variable.defaultValue
+        variable.defaultValue === "" ? '""' : safe(variable.defaultValue)
       }`;
     lines.push(
-      `  - ${
-        at(variable.evidence)
-      }  ${variable.name}  ${fallback}  ${variable.origin}`,
+      `  - ${at(variable.evidence)}  ${
+        safe(variable.name)
+      }  ${fallback}  ${variable.origin}`,
     );
   }
   lines.push("");
@@ -81,11 +90,11 @@ export function renderTerminal(
   lines.push(paint.bold("install paths"));
   if (report.installs.length === 0) lines.push("  none");
   for (const install of report.installs) {
-    const mode = install.mode ? `  mode ${install.mode}` : "";
+    const mode = install.mode ? `  mode ${safe(install.mode)}` : "";
     lines.push(
-      `  - ${
-        at(install.evidence)
-      }  ${install.action}  ${install.destination}${mode}`,
+      `  - ${at(install.evidence)}  ${install.action}  ${
+        safe(install.destination)
+      }${mode}`,
     );
   }
   lines.push("");
@@ -94,7 +103,9 @@ export function renderTerminal(
   if (report.privileges.length === 0) lines.push("  none");
   for (const privilege of report.privileges) {
     lines.push(
-      `  - ${at(privilege.evidence)}  ${privilege.kind}  ${privilege.detail}`,
+      `  - ${at(privilege.evidence)}  ${privilege.kind}  ${
+        safe(privilege.detail)
+      }`,
     );
   }
   lines.push("");
@@ -112,7 +123,9 @@ export function renderTerminal(
   lines.push("  integrity:");
   if (report.network.integrity.length === 0) lines.push("    none");
   for (const check of report.network.integrity) {
-    lines.push(`    - ${at(check.evidence)}  ${check.tool}  ${check.detail}`);
+    lines.push(
+      `    - ${at(check.evidence)}  ${safe(check.tool)}  ${safe(check.detail)}`,
+    );
   }
   lines.push("");
 
@@ -122,7 +135,7 @@ export function renderTerminal(
     lines.push(
       `  - ${at(effect.evidence)}  ${
         paint.risk(effect.severity, effect.severity)
-      }  ${effect.kind}  ${effect.detail}`,
+      }  ${effect.kind}  ${safe(effect.detail)}`,
     );
   }
   lines.push("");
@@ -136,9 +149,13 @@ export function renderTerminal(
 function downloadTarget(
   download: AnalysisReport["network"]["downloads"][number],
 ): string {
-  if (download.urls.length > 0) return download.urls.join(" ");
-  if (download.references.length > 0) return download.references.join(" ");
-  return "(url not resolved)";
+  const parts = [...download.urls, ...download.references];
+  if (parts.length === 0) return "(url not resolved)";
+  return parts.map(safe).join(" ");
+}
+
+function safe(text: string): string {
+  return escapeControls(text);
 }
 
 function list(values: string[]): string {

@@ -87,6 +87,19 @@ Deno.test("local installer fixtures are summarized without the network", async (
   assertStringIncludes(ros.stdout, "sha256sum");
 });
 
+Deno.test("a single dash reads stdin", async () => {
+  const source = await Deno.readTextFile(FIXTURE);
+  const piped = await runCli(["--json", "-"], source);
+  assertEquals(piped.code, 0, piped.stderr);
+  const report = JSON.parse(piped.stdout);
+  assertEquals(report.source.name, "<stdin>");
+  assertEquals(report.platforms.operatingSystems, [
+    "darwin",
+    "freebsd",
+    "linux",
+  ]);
+});
+
 Deno.test("stdin pipe matches the file report", async () => {
   const source = await Deno.readTextFile(FIXTURE);
   const piped = await runCli(["--json"], source);
@@ -146,6 +159,11 @@ Deno.test("help, version, unknown flags, and missing files", async () => {
   const unknown = await runCli(["--nope"]);
   assertEquals(unknown.code, 1);
   assertStringIncludes(unknown.stderr, "unknown option");
+
+  const forged = await runCli(["--nope\u001b[2J"]);
+  assertEquals(forged.code, 1);
+  assert(!forged.stderr.includes("\u001b"));
+  assertStringIncludes(forged.stderr, "unknown option");
 
   const missing = await runCli(["/tmp/shxray-no-such-file.sh"]);
   assertEquals(missing.code, 1);

@@ -1,5 +1,6 @@
 import { analyze } from "./analyze/analyze.ts";
 import type { ShellVariant } from "./analyze/types.ts";
+import { escapeControls } from "./render/escape.ts";
 import { renderJson } from "./render/json.ts";
 import { renderTerminal } from "./render/terminal.ts";
 import { VERSION } from "./version.ts";
@@ -45,7 +46,7 @@ export async function main(argv: string[] = Deno.args): Promise<void> {
     const message = error instanceof Error
       ? error.message
       : "invalid arguments";
-    console.error(`shxray: ${message}`);
+    console.error(`shxray: ${escapeControls(message)}`);
     console.error("Run shxray --help for usage.");
     Deno.exit(1);
   }
@@ -67,7 +68,7 @@ export async function main(argv: string[] = Deno.args): Promise<void> {
     name = input.name;
   } catch (error) {
     const message = error instanceof Error ? error.message : "unknown error";
-    console.error(`shxray: ${message}`);
+    console.error(`shxray: ${escapeControls(message)}`);
     Deno.exit(1);
   }
 
@@ -82,7 +83,9 @@ export async function main(argv: string[] = Deno.args): Promise<void> {
     const error = report.parse.error;
     const where = error?.line ? ` (line ${error.line})` : "";
     console.error(
-      `shxray: parse error${where}: ${error?.message ?? "unknown error"}`,
+      `shxray: parse error${where}: ${
+        escapeControls(error?.message ?? "unknown error")
+      }`,
     );
     Deno.exit(2);
   }
@@ -110,6 +113,7 @@ function parseArgs(argv: string[]): Flags {
     else if (arg === "--bash") flags.variant = "bash";
     else if (arg === "-h" || arg === "--help") flags.help = true;
     else if (arg === "-V" || arg === "--version") flags.version = true;
+    else if (arg === "-") rest.push(arg);
     else if (arg.startsWith("-")) throw new Error(`unknown option: ${arg}`);
     else rest.push(arg);
   }

@@ -46,6 +46,18 @@ export function staticText(node: Node | null | undefined): string | null {
   }
 }
 
+/** Drop one matching pair of quotes. The inner text is left as written. */
+export function unquote(text: string): string {
+  const trimmed = text.trim();
+  if (trimmed.length >= 2) {
+    const quote = trimmed[0];
+    if ((quote === '"' || quote === "'") && trimmed.endsWith(quote)) {
+      return trimmed.slice(1, -1);
+    }
+  }
+  return trimmed;
+}
+
 export function argvOf(source: SourceMap, words: Word[]): string[] {
   return words.map((word) => displayWord(source, word));
 }

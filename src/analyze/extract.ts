@@ -14,6 +14,7 @@ import type {
 } from "sh-syntax";
 
 import {
+  disablesTlsVerification,
   flagsFromOptstring,
   optionFlag,
   parseArgv,
@@ -46,7 +47,13 @@ import type {
   SideEffectFact,
   SideEffectKind,
 } from "./types.ts";
-import { argvOf, displayWord, rawArgvOf, staticText } from "./words.ts";
+import {
+  argvOf,
+  displayWord,
+  rawArgvOf,
+  staticText,
+  unquote,
+} from "./words.ts";
 
 const DEFAULT_OPS = new Set<number>([
   ParExpOperator.DefaultUnset,
@@ -464,8 +471,10 @@ class Collector {
 
   #onCall(node: CallExpr): void {
     if (node.args.length === 0) return;
-    const argv = argvOf(this.#source, node.args);
-    const unwrapped = unwrapCommand(argv);
+    const semantic = argvOf(this.#source, node.args);
+    const raw = rawArgvOf(this.#source, node.args);
+    const unwrapped = unwrapCommand(semantic);
+    const rawArgs = raw.slice(semantic.length - unwrapped.args.length);
     const detail = oneLine(this.#source, node.start, node.end);
     for (const wrapper of unwrapped.wrappers) {
       if (isPrivilegeKind(wrapper)) {
@@ -499,8 +508,7 @@ class Collector {
       }
     }
     if (DOWNLOADERS.has(command)) {
-      const raw = unwrapCommand(rawArgvOf(this.#source, node.args));
-      this.#onDownload(command, raw.args, node.start, node.end);
+      this.#onDownload(command, rawArgs, node.start);
     }
     if (CHECKSUMS.has(command) || SIGNATURES.has(command)) {
       this.#addIntegrity(command, detail, node.start);
@@ -535,41 +543,33 @@ class Collector {
     ) {
       this.#addSideEffect("chmod-permissive", "high", detail, node.start);
     }
-    if (
-      (command === "curl" || command === "wget") &&
-      args.some((arg) =>
-        arg === "-k" || arg === "--insecure" || arg === "--no-check-certificate"
-      )
-    ) {
+    if (disablesTlsVerification(command, args)) {
       this.#addSideEffect("insecure-download", "medium", detail, node.start);
     }
     this.#onInstallCommand(command, args, node.start);
     this.#onBracket(command, args, detail, node.start);
-    if (!PRINTERS.has(command)) this.#onDelegated(command, args, node);
+    if (!PRINTERS.has(command)) this.#onDelegated(command, args, rawArgs, node);
   }
 
-  #onDelegated(command: string, args: string[], node: CallExpr): void {
+  #onDelegated(
+    command: string,
+    args: string[],
+    rawArgs: string[],
+    node: CallExpr,
+  ): void {
     if (DOWNLOADERS.has(command) || CHECKSUMS.has(command)) return;
     const index = args.findIndex((arg) =>
       DOWNLOADERS.has(arg) || CHECKSUMS.has(arg) || SIGNATURES.has(arg)
     );
     if (index === -1) return;
     const inner = args[index] ?? "";
-    const raw = unwrapCommand(rawArgvOf(this.#source, node.args)).args;
-    const rawIndex = raw.findIndex((arg) => stripMatchingQuotes(arg) === inner);
-    const rawRest = rawIndex === -1 ? [] : raw.slice(rawIndex + 1);
+    const rawRest = rawArgs.slice(index + 1);
     const rest = args.slice(index + 1);
     if (!looksLikeDelegatedInvocation(rest)) return;
     if (DOWNLOADERS.has(inner)) {
-      const references = urlOperands(inner, rawRest).filter(
-        isWrittenUrlOperand,
-      );
-      const urls = collectUrls(
-        this.#source.slice(node.start, node.end),
-        this.#assignments,
-      );
-      if (urls.length === 0 && references.length === 0) return;
-      this.#onDownload(inner, rawRest, node.start, node.end);
+      const found = urlsFromOperands(inner, rawRest, this.#assignments);
+      if (found.urls.length === 0 && found.references.length === 0) return;
+      this.#onDownload(inner, rawRest, node.start);
     }
     if (CHECKSUMS.has(inner) || SIGNATURES.has(inner)) {
       this.#addIntegrity(
@@ -590,15 +590,10 @@ class Collector {
     });
   }
 
-  #onDownload(
-    tool: string,
-    args: string[],
-    start: number,
-    end: number,
-  ): void {
-    const region = this.#source.slice(start, end);
-    const urls = collectUrls(region, this.#assignments);
-    const references = urlOperands(tool, args).filter(isWrittenUrlOperand);
+  #onDownload(tool: string, args: string[], start: number): void {
+    const found = urlsFromOperands(tool, args, this.#assignments);
+    const urls = found.urls;
+    const references = found.references;
     const key = `download|${this.#evidence(start).line}|${tool}|${
       urls.join(" ")
     }|${references.join(" ")}`;
@@ -697,10 +692,15 @@ class Collector {
     if (/\bEUID\b|\bUID\b/.test(joined)) {
       this.#addPrivilege("root-check", detail, offset);
     }
-    const recorded = comparisonPairs(args).some(([left, right]) =>
-      this.#recordComparison(left, right, offset) ||
-      this.#recordComparison(right, left, offset)
-    );
+    let recorded = false;
+    for (const [left, right] of comparisonPairs(args)) {
+      if (
+        this.#recordComparison(left, right, offset) ||
+        this.#recordComparison(right, left, offset)
+      ) {
+        recorded = true;
+      }
+    }
     if (recorded) return;
     if (/OSTYPE|uname/.test(joined)) {
       this.#collectPlatformTokens("test", joined, offset);
@@ -739,7 +739,7 @@ class Collector {
   }
 
   #subjectCategory(text: string): PlatformCategory | null {
-    const trimmed = stripMatchingQuotes(text.trim());
+    const trimmed = unquote(text);
     if (/\buname\b/.test(trimmed)) return unameCategoryFromInvocation(trimmed);
     const match = trimmed.match(/^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$/) ??
       trimmed.match(/^\$([A-Za-z_][A-Za-z0-9_]*)$/);
@@ -749,10 +749,10 @@ class Collector {
   }
 
   #recordComparison(subject: string, value: string, offset: number): boolean {
-    const subjectText = stripMatchingQuotes(subject.trim());
+    const subjectText = unquote(subject);
     const category = this.#subjectCategory(subjectText);
     if (!category) return false;
-    const token = stripMatchingQuotes(value.trim());
+    const token = unquote(value);
     if (!token || token === "*") return false;
     const matchedOs = category === "arch" ? null : normalizeOsToken(token);
     const matchedArch = category === "os" ? null : normalizeArchToken(token);
@@ -842,7 +842,7 @@ class Collector {
     offset: number,
   ): void {
     const evidence = this.#evidence(offset);
-    const key = `fx|${kind}|${evidence.line}`;
+    const key = `fx|${kind}|${offset}`;
     if (this.#seen.has(key)) return;
     this.#seen.add(key);
     this.#sideEffects.push({ kind, severity, detail, evidence });
@@ -890,27 +890,35 @@ function isStreamDestination(destination: string): boolean {
 
 function looksLikeDelegatedInvocation(args: string[]): boolean {
   return args.some((arg) => {
-    const bare = stripMatchingQuotes(arg.trim());
+    const bare = unquote(arg);
     return bare.startsWith("-") || bare.includes("$") ||
       /^https?:\/\//i.test(bare);
   });
 }
 
+function urlsFromOperands(
+  tool: string,
+  args: string[],
+  assignments: Map<string, AssignmentRecord>,
+): { urls: string[]; references: string[] } {
+  const operands = urlOperands(tool, args);
+  const urls: string[] = [];
+  for (const operand of operands) {
+    for (const url of collectUrls(operand, assignments)) {
+      if (!urls.includes(url)) urls.push(url);
+    }
+  }
+  return {
+    urls,
+    references: operands.filter(isWrittenUrlOperand),
+  };
+}
+
 function isWrittenUrlOperand(operand: string): boolean {
-  const bare = stripMatchingQuotes(operand.trim());
+  const bare = unquote(operand);
   if (!bare || bare === "-" || bare.startsWith("-")) return false;
   if (/^\d+$/.test(bare)) return false;
   return !/^https?:\/\//i.test(bare);
-}
-
-function stripMatchingQuotes(text: string): string {
-  if (text.length >= 2) {
-    const quote = text[0];
-    if ((quote === '"' || quote === "'") && text.endsWith(quote)) {
-      return text.slice(1, -1);
-    }
-  }
-  return text;
 }
 
 function isPositionalSubject(subject: string): boolean {
@@ -984,7 +992,7 @@ function collectUrls(
       if (seenNames.has(name)) continue;
       seenNames.add(name);
       const assigned = assignments.get(name);
-      if (assigned) visit(assigned.text, depth + 1);
+      if (assigned && assigned.count === 1) visit(assigned.text, depth + 1);
     }
   };
   visit(root, 0);

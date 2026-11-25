@@ -17,6 +17,20 @@ Deno.test("terminal summary is plain without color and colored when asked", asyn
   assertStringIncludes(colored, "risk:");
 });
 
+Deno.test("plain output escapes controls and shows every download target", async () => {
+  const report = await analyze(
+    'curl https://example.com/\u001b[2Jfirst "\$second_url"\n',
+    { name: "bad\u001b[2J.sh" },
+  );
+  const plain = renderTerminal(report, { color: false });
+  const colored = renderTerminal(report, { color: true });
+  assert(!plain.includes("\u001b"));
+  assertStringIncludes(plain, "\\u001b");
+  assertStringIncludes(plain, "https://example.com/");
+  assertStringIncludes(plain, '"$second_url"');
+  assert(!colored.includes("\u001b[2J"));
+});
+
 Deno.test("json renderer is the report", async () => {
   const report = await analyze('PREFIX="${PREFIX:-/usr/local}"\n', {
     name: "env.sh",

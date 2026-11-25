@@ -239,6 +239,69 @@ Deno.test("risky patterns keep their severity", async () => {
   );
 });
 
+Deno.test("distinct commands, flags, and url operands stay visible", async () => {
+  const report = await analyze(`
+    os=$(uname -s)
+    [ "$os" = Linux -o "$os" = Darwin ]
+    rm -r /tmp/cache; rm -rf /
+    install -dm755 /opt/tool
+    tee -ai "$HOME/.bashrc"
+    curl -O "$url"
+    curl "-o" "$file" "$kept"
+    curl --url "$via_flag"
+    curl --url="$via_equals"
+    wget -k https://example.com/wget-k
+    curl -kfSL https://example.com/bundle
+    curl -H 'Referer: https://trusted.example/' https://payload.example/file
+    url=https://a.example/install.sh
+    url=https://b.example/install.sh
+    curl "$url"
+    curl https://example.com/first "$second_url"
+  `);
+  assertEquals(report.parse.ok, true);
+  assertEquals(report.platforms.operatingSystems, ["darwin", "linux"]);
+  const removals = report.sideEffects.filter((fact) =>
+    fact.kind === "rm-recursive"
+  );
+  assertEquals(removals.length, 2);
+  assert(removals.some((fact) => fact.severity === "low"));
+  assert(removals.some((fact) => fact.severity === "high"));
+  assertEquals(report.summary.risk, "high");
+  assert(
+    report.installs.some((fact) =>
+      fact.action === "mkdir" && fact.destination === "/opt/tool" &&
+      fact.mode === "755"
+    ),
+  );
+  assert(
+    report.installs.some((fact) =>
+      fact.action === "append" && fact.destination.includes(".bashrc")
+    ),
+  );
+  const references = report.network.downloads.flatMap((fact) =>
+    fact.references
+  );
+  assert(references.includes('"$url"'));
+  assert(references.includes('"$kept"'));
+  assert(!references.includes('"$file"'));
+  assert(references.includes('"$via_flag"'));
+  assert(references.includes('"$via_equals"'));
+  assert(references.includes('"$second_url"'));
+  const urls = report.network.downloads.flatMap((fact) => fact.urls);
+  assert(urls.some((url) => url.includes("example.com/wget-k")));
+  assert(urls.some((url) => url.includes("example.com/bundle")));
+  assert(urls.some((url) => url.includes("payload.example/file")));
+  assert(urls.some((url) => url.includes("example.com/first")));
+  assert(!urls.some((url) => url.includes("trusted.example")));
+  assert(!urls.some((url) => url.includes("a.example")));
+  assert(!urls.some((url) => url.includes("b.example")));
+  const insecure = report.sideEffects.filter((fact) =>
+    fact.kind === "insecure-download"
+  );
+  assertEquals(insecure.length, 1);
+  assertStringIncludes(insecure[0]!.detail, "curl -kfSL");
+});
+
 Deno.test("byte offsets survive non-ascii source", async () => {
   const report = await analyze(
     "# こんにちは\ncurl https://example.com/unicode-ok\n",

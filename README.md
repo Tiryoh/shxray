@@ -145,6 +145,11 @@ Caveats:
   `>> "$HOME/.bashrc"` still is.
 - A download URL that is not an absolute `http(s)` literal is reported as
   the argument written in the script (`"$url"`). The variable is not resolved.
+  A name assigned more than once is not followed. Literal URLs and written
+  operands on the same command are both shown. Only URL operands are
+  searched, including `curl --url`.
+- Control characters from the script are escaped in the terminal summary and
+  in stderr diagnostics, including when color is off.
   A downloader or checksum tool passed as its own argument (`run curl …`) is
   reported. A command hidden inside a quoted string is not.
 - Recognition of commands (`curl`, `sudo`, `install`, `rm -rf`, …) is

@@ -1,3 +1,5 @@
+import { unquote } from "./words.ts";
+
 const WRAPPERS = new Set([
   "sudo",
   "doas",
@@ -157,10 +159,10 @@ export function parseArgv(command: string, args: string[]): ParsedArgv {
       continue;
     }
     if (arg.startsWith("-") && arg.length > 1) {
-      flags.push(arg);
       const letters = arg.slice(1);
       for (let cursor = 0; cursor < letters.length; cursor++) {
         const short = `-${letters[cursor] ?? ""}`;
+        flags.push(short);
         if (!takesValue.has(short)) continue;
         const rest = letters.slice(cursor + 1);
         if (rest.length > 0) values.set(short, rest);
@@ -181,7 +183,6 @@ export function parseArgv(command: string, args: string[]): ParsedArgv {
 const DOWNLOAD_VALUE_FLAGS: Readonly<Record<string, readonly string[]>> = {
   curl: [
     "-o",
-    "-O",
     "-d",
     "-D",
     "-H",
@@ -225,7 +226,6 @@ const DOWNLOAD_VALUE_FLAGS: Readonly<Record<string, readonly string[]>> = {
     "--key",
     "--proxy",
     "--proxy-user",
-    "--url",
     "--request",
     "--form",
     "--upload-file",
@@ -276,19 +276,38 @@ const DOWNLOAD_VALUE_FLAGS: Readonly<Record<string, readonly string[]>> = {
   axel: ["-o", "--output"],
 };
 
-/** Operands left after download flags that take a value. Quotes are preserved. */
+/** Options whose value is itself a URL operand, in either `--url VALUE` or `--url=VALUE` form. */
+const URL_OPERAND_FLAGS: Readonly<Record<string, readonly string[]>> = {
+  curl: ["--url"],
+};
+
+/**
+ * URL operands with quotes preserved.
+ * Flags are classified from the unquoted word, so `"-o"` still consumes the next argument.
+ */
 export function urlOperands(command: string, args: string[]): string[] {
   const takes = new Set(DOWNLOAD_VALUE_FLAGS[command] ?? []);
+  const urlFlags = new Set(URL_OPERAND_FLAGS[command] ?? []);
   const operands: string[] = [];
   for (let index = 0; index < args.length; index++) {
-    const arg = args[index] ?? "";
+    const raw = args[index] ?? "";
+    const arg = unquote(raw);
     if (arg === "--") {
       operands.push(...args.slice(index + 1));
       break;
     }
     if (arg.startsWith("--")) {
       const equals = arg.indexOf("=");
-      if (equals !== -1) continue;
+      if (equals !== -1) {
+        const key = arg.slice(0, equals);
+        if (urlFlags.has(key)) operands.push(equalsValue(raw));
+        continue;
+      }
+      if (urlFlags.has(arg) && index + 1 < args.length) {
+        operands.push(args[index + 1] ?? "");
+        index++;
+        continue;
+      }
       if (takes.has(arg) && index + 1 < args.length) index++;
       continue;
     }
@@ -305,9 +324,36 @@ export function urlOperands(command: string, args: string[]): string[] {
       if (takesNext) index++;
       continue;
     }
-    operands.push(arg);
+    operands.push(raw);
   }
   return operands;
+}
+
+function equalsValue(raw: string): string {
+  const word = unquote(raw);
+  const semantic = word.indexOf("=");
+  if (semantic === -1) return "";
+  if (raw !== word) return word.slice(semantic + 1);
+  const at = raw.indexOf("=");
+  return at === -1 ? "" : raw.slice(at + 1);
+}
+
+export function disablesTlsVerification(
+  command: string,
+  args: string[],
+): boolean {
+  if (command === "curl") {
+    return args.some((arg) => {
+      const word = unquote(arg);
+      if (word === "--insecure") return true;
+      return word.startsWith("-") && !word.startsWith("--") &&
+        word.includes("k");
+    });
+  }
+  if (command === "wget") {
+    return args.some((arg) => unquote(arg) === "--no-check-certificate");
+  }
+  return false;
 }
 
 function isCommandQuery(argv: string[], index: number): boolean {
