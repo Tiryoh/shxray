@@ -159,30 +159,6 @@ Caveats:
 - Heredocs, `eval` of a computed string, and binaries invoked through
   variables other than `$SUDO` are only partly visible.
 
-## Related tools
-
-These projects have different goals. If your use case matches one of them,
-please check it out too. shxray is one option for a different purpose: reading
-an install script from a file or from stdin, in the same place `bash` would
-sit in `curl … | bash`, and printing a structured report of platforms,
-options, environment variables, install paths, privilege, network activity,
-and side effects. It does not run the script.
-
-- [ShellCheck](https://github.com/koalaman/shellcheck) is a static analysis
-  tool for bash/sh scripts. It gives warnings and suggestions, with the goals
-  of clarifying beginner syntax issues, intermediate semantic problems, and
-  subtle pitfalls that can make a working script fail later. You can run
-  `shellcheck yourscript` or paste a script on
-  [ShellCheck.net](https://www.shellcheck.net).
-- [vet](https://github.com/vet-run/vet) is a safety net for `curl | bash`.
-  It downloads the remote script, shows what changed since the last time you
-  ran that script, runs ShellCheck when ShellCheck is installed, and asks for
-  your approval before it executes the script (`vet https://example.com/install.sh`).
-- [Shell-AI](https://github.com/Deltik/shell-ai) turns a description into
-  shell commands, and `shell-ai explain` breaks a shell command into
-  understandable parts, citing man pages where possible. A command can be
-  piped to `shell-ai explain` on stdin.
-
 ## Status
 
 Initial prototype. The report schema is version 1. Adding fields is allowed;
