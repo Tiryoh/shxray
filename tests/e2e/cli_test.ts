@@ -1,0 +1,239 @@
+import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+
+const CLI = new URL("../../src/main.ts", import.meta.url);
+const FIXTURE = new URL("../fixtures/installer.sh", import.meta.url);
+const MISE = new URL("../fixtures/mise.run.sh", import.meta.url);
+const ROS = new URL("../fixtures/get-ros2-install.sh", import.meta.url);
+const BROKEN = new URL("../fixtures/parse_error.sh", import.meta.url);
+const MARKER = "/tmp/shxray-must-not-run";
+
+interface RunResult {
+  code: number;
+  stdout: string;
+  stderr: string;
+}
+
+async function runCli(
+  args: string[],
+  stdin?: string,
+  envOverrides: Record<string, string> = {},
+): Promise<RunResult> {
+  const command = new Deno.Command(Deno.execPath(), {
+    args: ["run", "--allow-read", "--allow-env", CLI.pathname, ...args],
+    cwd: new URL("../..", import.meta.url).pathname,
+    env: {
+      LC_ALL: "",
+      LC_MESSAGES: "",
+      LANG: "C",
+      LANGUAGE: "",
+      ...envOverrides,
+    },
+    stdin: stdin === undefined ? "null" : "piped",
+    stdout: "piped",
+    stderr: "piped",
+  });
+  const child = command.spawn();
+  if (stdin !== undefined) {
+    const writer = child.stdin.getWriter();
+    await writer.write(new TextEncoder().encode(stdin));
+    await writer.close();
+  }
+  const output = await child.output();
+  return {
+    code: output.code,
+    stdout: new TextDecoder().decode(output.stdout),
+    stderr: new TextDecoder().decode(output.stderr),
+  };
+}
+
+Deno.test("file argument --json reports installer facts", async () => {
+  const result = await runCli(["--json", FIXTURE.pathname]);
+  assertEquals(result.code, 0, result.stderr);
+  const report = JSON.parse(result.stdout);
+  assertEquals(report.version, 1);
+  assertEquals(report.parse.ok, true);
+  assertEquals(report.platforms.operatingSystems, [
+    "darwin",
+    "freebsd",
+    "linux",
+  ]);
+  assertEquals(report.platforms.architectures, ["aarch64", "x86_64"]);
+  assertEquals(report.summary.risk, "high");
+  assert(
+    report.network.downloads.some((download: { urls: string[] }) =>
+      download.urls.some((url) => url.includes("example.com/hook.sh"))
+    ),
+  );
+  assert(
+    report.privileges.some((fact: { kind: string }) => fact.kind === "sudo"),
+  );
+  assert(
+    report.installs.some((fact: { destination: string }) =>
+      fact.destination.includes("$PREFIX/bin/tool")
+    ),
+  );
+});
+
+Deno.test("local installer fixtures are summarized without the network", async () => {
+  const mise = await runCli(["--plain", MISE.pathname]);
+  assertEquals(mise.code, 0, mise.stderr);
+  assertStringIncludes(
+    mise.stdout,
+    "operating systems android, darwin, and linux",
+  );
+  assertStringIncludes(mise.stdout, "architectures aarch64, arm, and x86_64");
+  assertStringIncludes(mise.stdout, '"$url"');
+  assertStringIncludes(mise.stdout, "https://mise.jdx.dev/releases.tsv");
+  assertStringIncludes(mise.stdout, "$HOME/.local/bin/mise");
+  assertEquals(mise.stdout.includes("(url not resolved)"), false);
+  assertEquals(/write\s+\$\{?stderr/.test(mise.stdout), false);
+
+  const ros = await runCli(["--plain", "--verbose", ROS.pathname]);
+  assertEquals(ros.code, 0, ros.stderr);
+  assertStringIncludes(
+    ros.stdout,
+    "operating systems darwin, linux, and windows",
+  );
+  assertStringIncludes(ros.stdout, "apt-get");
+  assertStringIncludes(
+    ros.stdout,
+    "github.com/ros-infrastructure/ros-apt-source",
+  );
+  assertStringIncludes(ros.stdout, "sha256sum");
+});
+
+Deno.test("a single dash reads stdin", async () => {
+  const source = await Deno.readTextFile(FIXTURE);
+  const piped = await runCli(["--json", "-"], source);
+  assertEquals(piped.code, 0, piped.stderr);
+  const report = JSON.parse(piped.stdout);
+  assertEquals(report.source.name, "<stdin>");
+  assertEquals(report.platforms.operatingSystems, [
+    "darwin",
+    "freebsd",
+    "linux",
+  ]);
+});
+
+Deno.test("stdin pipe matches the file report", async () => {
+  const source = await Deno.readTextFile(FIXTURE);
+  const piped = await runCli(["--json"], source);
+  assertEquals(piped.code, 0, piped.stderr);
+  const report = JSON.parse(piped.stdout);
+  assertEquals(report.source.name, "<stdin>");
+  assertEquals(report.platforms.operatingSystems, [
+    "darwin",
+    "freebsd",
+    "linux",
+  ]);
+  assertEquals(
+    report.interface.environment.find((
+      fact: { name: string; defaultValue: string | null },
+    ) => fact.name === "PREFIX")?.defaultValue,
+    "/usr/local",
+  );
+});
+
+Deno.test("default output is a plain terminal summary when stdout is not a tty", async () => {
+  const result = await runCli([FIXTURE.pathname]);
+  assertEquals(result.code, 0, result.stderr);
+  assertStringIncludes(result.stdout, "Summary");
+  assertStringIncludes(result.stdout, "Flow");
+  assertStringIncludes(
+    result.stdout,
+    "operating systems darwin, freebsd, and linux",
+  );
+  assertStringIncludes(result.stdout, "Installs to $PREFIX/bin/tool");
+  assertStringIncludes(result.stdout, "risk: high");
+  assertStringIncludes(result.stdout, "was not executed");
+  assert(!result.stdout.includes("platforms"));
+  assert(!result.stdout.includes("\u001b["));
+
+  const verbose = await runCli(["--verbose", FIXTURE.pathname]);
+  assertEquals(verbose.code, 0, verbose.stderr);
+  assertStringIncludes(verbose.stdout, "platforms");
+  assertStringIncludes(verbose.stdout, "pipe-to-shell");
+});
+
+Deno.test("parse errors exit 2 and still print a report", async () => {
+  const json = await runCli(["--json", BROKEN.pathname]);
+  assertEquals(json.code, 2);
+  const report = JSON.parse(json.stdout);
+  assertEquals(report.parse.ok, false);
+  assertStringIncludes(report.parse.error.message, "fi");
+  assertStringIncludes(json.stderr, "parse error");
+
+  const text = await runCli([BROKEN.pathname]);
+  assertEquals(text.code, 2);
+  assertStringIncludes(text.stdout, "parse: error");
+  assertStringIncludes(text.stderr, "parse error");
+});
+
+Deno.test("help, version, unknown flags, and missing files", async () => {
+  const help = await runCli(["--help"]);
+  assertEquals(help.code, 0);
+  assertStringIncludes(help.stdout, "curl -fsSL");
+
+  const version = await runCli(["--version"]);
+  assertEquals(version.code, 0);
+  assertStringIncludes(version.stdout, "shxray 0.1.0");
+
+  const unknown = await runCli(["--nope"]);
+  assertEquals(unknown.code, 1);
+  assertStringIncludes(unknown.stderr, "unknown option");
+
+  const forged = await runCli(["--nope\u001b[2J"]);
+  assertEquals(forged.code, 1);
+  assert(!forged.stderr.includes("\u001b"));
+  assertStringIncludes(forged.stderr, "unknown option");
+
+  const missing = await runCli(["/tmp/shxray-no-such-file.sh"]);
+  assertEquals(missing.code, 1);
+  assertStringIncludes(missing.stderr, "cannot read");
+});
+
+Deno.test("the input script is not executed", async () => {
+  await Deno.remove(MARKER).catch(() => {});
+  const result = await runCli(["--json", FIXTURE.pathname]);
+  assertEquals(result.code, 0, result.stderr);
+  let created = true;
+  try {
+    await Deno.stat(MARKER);
+  } catch (error) {
+    if (error instanceof Deno.errors.NotFound) created = false;
+    else throw error;
+  }
+  assertEquals(created, false);
+});
+
+Deno.test("locale follows LANG / LC_ALL and --lang overrides env", async () => {
+  const fromLang = await runCli([FIXTURE.pathname], undefined, {
+    LANG: "ja_JP.UTF-8",
+    LANGUAGE: "en_US:en",
+  });
+  assertEquals(fromLang.code, 0, fromLang.stderr);
+  assertStringIncludes(fromLang.stdout, "要約");
+  assertStringIncludes(fromLang.stdout, "処理の流れ");
+  assertStringIncludes(fromLang.stdout, "静的解析のみ");
+
+  const overrideEn = await runCli(
+    ["--lang", "en", FIXTURE.pathname],
+    undefined,
+    {
+      LC_ALL: "ja_JP.UTF-8",
+    },
+  );
+  assertEquals(overrideEn.code, 0, overrideEn.stderr);
+  assertStringIncludes(overrideEn.stdout, "Summary");
+  assertStringIncludes(overrideEn.stdout, "Flow");
+
+  const flagJa = await runCli(["--lang=ja", ROS.pathname], undefined, {
+    LANG: "C",
+  });
+  assertEquals(flagJa.code, 0, flagJa.stderr);
+  assertStringIncludes(flagJa.stdout, "処理の流れ（入口: main）");
+
+  const badLang = await runCli(["--lang", "fr", FIXTURE.pathname]);
+  assertEquals(badLang.code, 1);
+  assertStringIncludes(badLang.stderr, "unsupported language");
+});
