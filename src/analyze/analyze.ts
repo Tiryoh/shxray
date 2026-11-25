@@ -1,6 +1,7 @@
 import { LangVariant, parse } from "sh-syntax";
 
 import { extractFacts } from "./extract.ts";
+import { buildFlow, summarySentences } from "./flow.ts";
 import { shebangOf, SourceMap } from "./source.ts";
 import type { AnalysisReport, Severity, ShellVariant } from "./types.ts";
 import { REPORT_VERSION } from "./types.ts";
@@ -18,6 +19,7 @@ const NOTES = [
   "Every branch and function body is inspected. Reachability is not computed.",
   "Dynamic values are shown as written, including download URL arguments. Defaults are reported for literals and for ${VAR:-default} / ${VAR:=default}.",
   "Operating system and architecture names are normalized (amd64 -> x86_64, arm64 -> aarch64).",
+  "The flow follows literal function calls from the top level and lists every branch. It does not decide which branch runs.",
 ];
 
 export async function analyze(
@@ -28,7 +30,18 @@ export async function analyze(
   const source = new SourceMap(sourceText);
   const parsed = await parseScript(sourceText, variant);
   const facts = parsed.file ? extractFacts(source, parsed.file) : emptyFacts();
-  const summary = summarize(facts);
+  const flow = parsed.file ? buildFlow(source, parsed.file) : {
+    note: "The script did not parse, so no execution flow was built.",
+    steps: [],
+    packageManagers: [],
+    installsDeb: false,
+  };
+  const summary = summarize(
+    facts,
+    parsed.ok
+      ? summarySentences(facts, flow)
+      : ["The script did not parse, so no install summary was built."],
+  );
   const notes = [...NOTES];
   if (!parsed.ok) {
     notes.unshift("The script did not parse, so no facts were extracted.");
@@ -50,6 +63,7 @@ export async function analyze(
       error: parsed.error,
     },
     summary,
+    flow: { note: flow.note, steps: flow.steps },
     platforms: {
       operatingSystems: facts.operatingSystems,
       architectures: facts.architectures,
@@ -132,6 +146,7 @@ function emptyFacts(): ReturnType<typeof extractFacts> {
 
 function summarize(
   facts: ReturnType<typeof extractFacts>,
+  sentences: string[],
 ): AnalysisReport["summary"] {
   let risk: Severity = "info";
   const bump = (severity: Severity) => {
@@ -164,6 +179,7 @@ function summarize(
   return {
     risk,
     headline,
+    sentences,
     counts: {
       options: facts.options.length,
       environment: facts.environment.length,

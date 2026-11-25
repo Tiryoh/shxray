@@ -97,6 +97,20 @@ Deno.test("installer fixture extracts platforms, options, paths, and risk", asyn
   assert(
     report.notes.some((note) => note.includes("was not executed")),
   );
+  assert(
+    report.summary.sentences.some((sentence) =>
+      sentence.includes("Installs to $PREFIX/bin/tool") &&
+      sentence.includes("sudo") === false
+    ),
+  );
+  assert(
+    report.summary.sentences.some((sentence) => sentence.includes("sudo")),
+  );
+  const installerFlow = flatten(report.flow.steps).join("\n");
+  const downloadAt = installerFlow.indexOf("Downloads \"$URL\" with curl.");
+  const installAt = installerFlow.indexOf("installs to $PREFIX/bin/tool.");
+  assert(downloadAt !== -1 && installAt !== -1 && downloadAt < installAt);
+  assertEquals(report.flow.note, null);
 });
 
 Deno.test("mise excerpt keeps uname comparisons and written URLs", async () => {
@@ -150,6 +164,11 @@ Deno.test("mise excerpt keeps uname comparisons and written URLs", async () => {
       fact.urls.length > 0 || fact.references.length > 0
     ),
   );
+  assert(report.flow.note?.includes("does not call"));
+  assert(report.flow.note?.includes("install_mise"));
+  const miseFlow = flatten(report.flow.steps).join("\n");
+  assert(miseFlow.includes("Moves a file to $HOME/.local/bin/mise."));
+  assert(miseFlow.includes("not called from the top level"));
 });
 
 Deno.test("get-ros2 fixture reads uname into a later case", async () => {
@@ -179,6 +198,17 @@ Deno.test("get-ros2 fixture reads uname into a later case", async () => {
       !/stderr|stdout|\/dev\/null/.test(fact.destination)
     ),
   );
+  assert(
+    report.summary.sentences.some((sentence) => sentence.includes("apt-get")),
+  );
+  assert(
+    report.summary.sentences.some((sentence) => sentence.includes("sudo")),
+  );
+  const rosFlow = flatten(report.flow.steps).join("\n");
+  assert(rosFlow.includes("Calls main."));
+  assert(rosFlow.includes("Updates package indexes with apt-get."));
+  assert(rosFlow.includes("not known statically"));
+  assertEquals(report.flow.note, null);
 });
 
 Deno.test("getopts and bracket tests are extracted", async () => {
@@ -323,6 +353,22 @@ Deno.test("parse errors become a report and do not throw", async () => {
   assertEquals(report.summary.risk, "info");
   assertEquals(report.installs, []);
 });
+
+interface StepNode {
+  text: string;
+  unresolved: string | null;
+  children: StepNode[];
+}
+
+function flatten(steps: StepNode[]): string[] {
+  const texts: string[] = [];
+  for (const step of steps) {
+    texts.push(step.text);
+    if (step.unresolved) texts.push(step.unresolved);
+    texts.push(...flatten(step.children));
+  }
+  return texts;
+}
 
 Deno.test("posix variant parses a portable script", async () => {
   const report = await analyze("#!/bin/sh\necho hi\n", { variant: "posix" });

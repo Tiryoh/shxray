@@ -10,11 +10,22 @@ Deno.test("terminal summary is plain without color and colored when asked", asyn
   const colored = renderTerminal(report, { color: true });
   assertStringIncludes(plain, "shxray 0.1.0  hi.sh");
   assertStringIncludes(plain, "risk: info");
-  assertStringIncludes(plain, "platforms");
-  assertStringIncludes(plain, "No installer actions matched");
+  assertStringIncludes(plain, "Summary");
+  assertStringIncludes(plain, "Flow");
+  assertStringIncludes(plain, "No install destination");
+  assert(!plain.includes("\nplatforms\n") && !plain.includes("platforms"));
+  assertStringIncludes(plain, "--verbose");
   assert(!plain.includes("\u001b["));
   assert(colored.includes("\u001b["));
   assertStringIncludes(colored, "risk:");
+});
+
+Deno.test("verbose terminal output keeps the per-category details", async () => {
+  const report = await analyze("echo hi\n", { name: "hi.sh" });
+  const verbose = renderTerminal(report, { color: false, verbose: true });
+  assertStringIncludes(verbose, "Details");
+  assertStringIncludes(verbose, "platforms");
+  assertStringIncludes(verbose, "side effects");
 });
 
 Deno.test("plain output escapes controls and shows every download target", async () => {

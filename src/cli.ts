@@ -13,6 +13,7 @@ Usage:
 
 Options:
   --json        Print the versioned analysis report as JSON
+  --verbose     After the summary and flow, print per-category details
   --plain       Plain text, without color
   --no-color    Same as --plain
   --posix       Parse as POSIX sh (default: bash)
@@ -31,6 +32,7 @@ Exit codes:
 
 interface Flags {
   json: boolean;
+  verbose: boolean;
   plain: boolean;
   variant: ShellVariant;
   help: boolean;
@@ -76,7 +78,7 @@ export async function main(argv: string[] = Deno.args): Promise<void> {
   const color = flags.json ? false : colorEnabled(flags.plain);
   const rendered = flags.json
     ? renderJson(report)
-    : renderTerminal(report, { color });
+    : renderTerminal(report, { color, verbose: flags.verbose });
   await Deno.stdout.write(new TextEncoder().encode(rendered));
 
   if (!report.parse.ok) {
@@ -94,6 +96,7 @@ export async function main(argv: string[] = Deno.args): Promise<void> {
 function parseArgs(argv: string[]): Flags {
   const flags: Flags = {
     json: false,
+    verbose: false,
     plain: false,
     variant: "bash",
     help: false,
@@ -108,6 +111,7 @@ function parseArgs(argv: string[]): Flags {
       break;
     }
     if (arg === "--json") flags.json = true;
+    else if (arg === "--verbose") flags.verbose = true;
     else if (arg === "--plain" || arg === "--no-color") flags.plain = true;
     else if (arg === "--posix") flags.variant = "posix";
     else if (arg === "--bash") flags.variant = "bash";

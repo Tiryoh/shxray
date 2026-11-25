@@ -106,6 +106,19 @@ export interface SideEffectFact {
   evidence: Evidence;
 }
 
+export interface FlowStep {
+  /** One short sentence. */
+  text: string;
+  /**
+   * Why this step is not a single statically chosen action.
+   * Null when the step is a straight-line command.
+   */
+  unresolved: string | null;
+  /** 1-based line of the command or branch. Null when the step is synthetic. */
+  line: number | null;
+  children: FlowStep[];
+}
+
 export interface AnalysisReport {
   version: typeof REPORT_VERSION;
   tool: {
@@ -130,6 +143,11 @@ export interface AnalysisReport {
   summary: {
     risk: Severity;
     headline: string;
+    /**
+     * Plain sentences for the terminal summary: what is installed, where,
+     * whether root is used, and which OS/arch names are recognized.
+     */
+    sentences: string[];
     counts: {
       options: number;
       environment: number;
@@ -139,6 +157,15 @@ export interface AnalysisReport {
       integrity: number;
       sideEffects: number;
     };
+  };
+  /**
+   * Installer steps in source order, following literal function calls from
+   * the top level. Branches are listed, not chosen.
+   */
+  flow: {
+    /** Set when the top level does not call the functions it defines. */
+    note: string | null;
+    steps: FlowStep[];
   };
   platforms: {
     /** Canonical names. `amd64` and `arm64` fold into `x86_64` and `aarch64`. */

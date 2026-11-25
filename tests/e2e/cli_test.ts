@@ -68,18 +68,22 @@ Deno.test("local installer fixtures are summarized without the network", async (
   assertEquals(mise.code, 0, mise.stderr);
   assertStringIncludes(
     mise.stdout,
-    "operating systems: android, darwin, linux",
+    "operating systems android, darwin, and linux",
   );
-  assertStringIncludes(mise.stdout, "architectures: aarch64, arm, x86_64");
+  assertStringIncludes(mise.stdout, "architectures aarch64, arm, and x86_64");
   assertStringIncludes(mise.stdout, '"$url"');
   assertStringIncludes(mise.stdout, "https://mise.jdx.dev/releases.tsv");
+  assertStringIncludes(mise.stdout, "$HOME/.local/bin/mise");
   assertEquals(mise.stdout.includes("(url not resolved)"), false);
   assertEquals(/write\s+\$\{?stderr/.test(mise.stdout), false);
 
-  const ros = await runCli(["--plain", ROS.pathname]);
+  const ros = await runCli(["--plain", "--verbose", ROS.pathname]);
   assertEquals(ros.code, 0, ros.stderr);
-  assertStringIncludes(ros.stdout, "operating systems: darwin, linux, windows");
-  assertStringIncludes(ros.stdout, "architectures: aarch64, x86_64");
+  assertStringIncludes(
+    ros.stdout,
+    "operating systems darwin, linux, and windows",
+  );
+  assertStringIncludes(ros.stdout, "apt-get");
   assertStringIncludes(
     ros.stdout,
     "github.com/ros-infrastructure/ros-apt-source",
@@ -122,15 +126,22 @@ Deno.test("stdin pipe matches the file report", async () => {
 Deno.test("default output is a plain terminal summary when stdout is not a tty", async () => {
   const result = await runCli([FIXTURE.pathname]);
   assertEquals(result.code, 0, result.stderr);
-  assertStringIncludes(result.stdout, "platforms");
+  assertStringIncludes(result.stdout, "Summary");
+  assertStringIncludes(result.stdout, "Flow");
   assertStringIncludes(
     result.stdout,
-    "operating systems: darwin, freebsd, linux",
+    "operating systems darwin, freebsd, and linux",
   );
+  assertStringIncludes(result.stdout, "Installs to $PREFIX/bin/tool");
   assertStringIncludes(result.stdout, "risk: high");
-  assertStringIncludes(result.stdout, "pipe-to-shell");
   assertStringIncludes(result.stdout, "was not executed");
+  assert(!result.stdout.includes("platforms"));
   assert(!result.stdout.includes("\u001b["));
+
+  const verbose = await runCli(["--verbose", FIXTURE.pathname]);
+  assertEquals(verbose.code, 0, verbose.stderr);
+  assertStringIncludes(verbose.stdout, "platforms");
+  assertStringIncludes(verbose.stdout, "pipe-to-shell");
 });
 
 Deno.test("parse errors exit 2 and still print a report", async () => {

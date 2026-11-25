@@ -1,8 +1,15 @@
-import type { AnalysisReport, Evidence, Severity } from "../analyze/types.ts";
+import type {
+  AnalysisReport,
+  Evidence,
+  FlowStep,
+  Severity,
+} from "../analyze/types.ts";
 import { escapeControls } from "./escape.ts";
 
 export interface TerminalOptions {
   color?: boolean;
+  /** Include the per-category list after the flow. */
+  verbose?: boolean;
 }
 
 export function renderTerminal(
@@ -32,7 +39,29 @@ export function renderTerminal(
     }
   }
   lines.push(`risk: ${paint.risk(report.summary.risk, report.summary.risk)}`);
-  lines.push(report.summary.headline);
+  lines.push("");
+
+  lines.push(paint.bold("Summary"));
+  for (const sentence of report.summary.sentences) {
+    lines.push(`  ${safe(sentence)}`);
+  }
+  lines.push("");
+
+  lines.push(paint.bold("Flow"));
+  if (report.flow.note) lines.push(`  ${safe(report.flow.note)}`);
+  if (report.flow.steps.length === 0) lines.push("  none");
+  pushSteps(lines, report.flow.steps, "  ");
+  lines.push("");
+  lines.push(
+    "Static analysis only; the script was not executed. Branches are listed, not chosen.",
+  );
+  if (!options.verbose) {
+    lines.push("Details omitted. Use --verbose for the per-category list.");
+    lines.push("");
+    return lines.join("\n");
+  }
+  lines.push("");
+  lines.push(paint.bold("Details"));
   lines.push("");
 
   lines.push(paint.bold("platforms"));
@@ -144,6 +173,16 @@ export function renderTerminal(
   for (const note of report.notes) lines.push(`  - ${note}`);
   lines.push("");
   return lines.join("\n");
+}
+
+function pushSteps(lines: string[], steps: FlowStep[], indent: string): void {
+  steps.forEach((step, index) => {
+    lines.push(`${indent}${index + 1}. ${safe(step.text)}`);
+    if (step.unresolved) lines.push(`${indent}   ${safe(step.unresolved)}`);
+    if (step.children.length > 0) {
+      pushSteps(lines, step.children, `${indent}   `);
+    }
+  });
 }
 
 function downloadTarget(

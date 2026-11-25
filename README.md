@@ -18,6 +18,7 @@ curl -fsSL https://example.com/install.sh | shxray
 cat install.sh | shxray
 shxray path/to/install.sh
 shxray --json path/to/install.sh
+shxray --verbose path/to/install.sh
 ```
 
 With no file argument, `shxray` reads stdin. If stdin is a terminal, it prints
@@ -49,6 +50,7 @@ deno task compile
 | Flag | Description |
 | --- | --- |
 | `--json` | Print the versioned analysis report as JSON |
+| `--verbose` | After the summary and flow, print the per-category details |
 | `--plain`, `--no-color` | Plain text. Also implied when stdout is not a terminal, or when `NO_COLOR` is set to a non-empty value |
 | `--bash` | Parse as Bash (default) |
 | `--posix` | Parse as POSIX sh |
@@ -67,7 +69,8 @@ stdin is reserved for the script.
 
 - `source` — name, size, line count, shebang
 - `parse` — language variant and the first syntax error, if any
-- `summary` — `info` / `low` / `medium` / `high`, plus a one-line headline
+- `summary` — `info` / `low` / `medium` / `high`, a one-line headline, and `sentences` (what is installed, where, whether root is used, and which OS and architecture names were recognized)
+- `flow` — ordered steps from the top of the script. Literal function calls are nested. `flow.note` is set when the top level does not call the functions it defines. `steps[].unresolved` is set when a branch was listed rather than chosen
 - `platforms` — normalized OS and architecture names, and the `uname`, `case`, `$OSTYPE`, and `uname`-derived comparisons that produced them
 - `interface` — CLI flags and environment variables, with defaults when they are written as literals or `${VAR:-default}` / `${VAR:=default}`
 - `installs` — destinations of `install`, `cp`, `mv`, `ln`, `mkdir`, `tee`, and file redirects other than standard streams and `/dev/null`
@@ -76,8 +79,42 @@ stdin is reserved for the script.
 - `sideEffects` — `eval`, pipes into a shell, `sh -c`, recursive `rm`, package managers, shell rc edits, insecure downloads, permissive `chmod`
 - `notes` — limits of this static pass
 
-The analyzer returns this object and does not render it. A future HTML view can
-read the same JSON. See `src/analyze/types.ts`.
+The analyzer returns this object and does not render it. The terminal view is
+drawn from the report. A future HTML view can read the same JSON. See
+`src/analyze/types.ts`.
+
+## Terminal output
+
+The default text starts with a short summary, then a numbered flow. Category
+lists (platforms, options, paths, and the rest) stay in the JSON report and
+are printed when you pass `--verbose`.
+
+`tests/fixtures/installer.sh`, plain:
+
+```text
+Summary
+  Installs to $PREFIX/bin/tool, creates $PREFIX/share/tool, appends $HOME/.bashrc, and runs apt-get.
+  Checks whether it is root and may run commands with sudo.
+  Recognizes operating systems darwin, freebsd, and linux, and architectures aarch64 and x86_64.
+
+Flow
+  1. Sets shell options (set -euo pipefail).
+  2. Sets $OS. Reads the kernel name with uname -s.
+  3. Sets $ARCH. Reads the machine hardware with uname -m.
+  ...
+  9. Downloads "$URL" with curl.
+  10. Checks a checksum with sha256sum.
+  11. Verifies a signature with gpg.
+  12. Extracts an archive with tar.
+  13. With sudo, installs to $PREFIX/bin/tool.
+  14. Creates $PREFIX/share/tool.
+  15. Appends $HOME/.bashrc.
+```
+
+Branches are listed, not chosen. A step says so when the script's `if` or
+`case` does not pick a path statically. If the top level never calls the
+functions it defines, the flow says that and still shows each function body
+as not called.
 
 ## Development
 
@@ -130,6 +167,9 @@ Caveats:
   substitutions.
 - Bash is the default. `--posix` selects POSIX sh. Zsh is not supported.
 - Every branch and function body is inspected. Unreachable code still appears.
+  The flow follows literal function calls from the top level and lists both
+  sides of a branch. It does not decide which branch runs. A function that is
+  never called is labeled as not called, rather than treated as the entry point.
 - Values produced by command substitution, indirect expansion, or the
   environment outside the script are not resolved. A default is reported only
   when it is a literal assignment used once, or a `${VAR:-default}` /

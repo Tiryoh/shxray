@@ -15,7 +15,7 @@
 
 - レポート型は `AnalysisReport`（`version: 1`）。JSON にできる値だけを持つ。
 - `src/analyze` は文字列を受け取りレポートを返す。ファイル I/O と stdout は `src/cli.ts` に置く。
-- 要約の節は platforms、options、environment、install paths、privilege、network、side effects、notes とする。
+- 既定のターミナル表示の節は ADR 0004 に従う。当初の節（platforms、options、environment、install paths、privilege、network、side effects、notes）は `--verbose` の Details に残す。
 - 代替画面（alternate screen）を使う対話 UI は採用しない。stdin をスクリプトのために残す。
 - HTML レンダラは後から `AnalysisReport` を入力として追加する。解析器の入出力は変えない。
 - フィールドの追加は version 1 のままにする。削除や意味の変更では `version` を上げる。
