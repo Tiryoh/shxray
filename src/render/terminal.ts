@@ -103,10 +103,11 @@ export function renderTerminal(
   lines.push("  downloads:");
   if (report.network.downloads.length === 0) lines.push("    none");
   for (const download of report.network.downloads) {
-    const urls = download.urls.length > 0
-      ? download.urls.join(" ")
-      : "(url not resolved)";
-    lines.push(`    - ${at(download.evidence)}  ${download.tool}  ${urls}`);
+    lines.push(
+      `    - ${at(download.evidence)}  ${download.tool}  ${
+        downloadTarget(download)
+      }`,
+    );
   }
   lines.push("  integrity:");
   if (report.network.integrity.length === 0) lines.push("    none");
@@ -130,6 +131,14 @@ export function renderTerminal(
   for (const note of report.notes) lines.push(`  - ${note}`);
   lines.push("");
   return lines.join("\n");
+}
+
+function downloadTarget(
+  download: AnalysisReport["network"]["downloads"][number],
+): string {
+  if (download.urls.length > 0) return download.urls.join(" ");
+  if (download.references.length > 0) return download.references.join(" ");
+  return "(url not resolved)";
 }
 
 function list(values: string[]): string {

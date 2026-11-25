@@ -16,7 +16,7 @@ export interface AnalyzeOptions {
 const NOTES = [
   "Static analysis only; the script was not executed.",
   "Every branch and function body is inspected. Reachability is not computed.",
-  "Dynamic values are shown as written. Defaults are reported for literals and for ${VAR:-default} / ${VAR:=default}.",
+  "Dynamic values are shown as written, including download URL arguments. Defaults are reported for literals and for ${VAR:-default} / ${VAR:=default}.",
   "Operating system and architecture names are normalized (amd64 -> x86_64, arm64 -> aarch64).",
 ];
 

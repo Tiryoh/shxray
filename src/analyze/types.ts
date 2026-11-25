@@ -73,8 +73,13 @@ export interface PrivilegeFact {
 
 export interface DownloadFact {
   tool: string;
-  /** Absolute URLs found in the command or in variables it references. */
+  /** Absolute http(s) URLs written in the command or assigned to a name it uses. */
   urls: string[];
+  /**
+   * URL operands that are not absolute http(s) literals, quotes included.
+   * Variable values are not resolved.
+   */
+  references: string[];
   evidence: Evidence;
 }
 

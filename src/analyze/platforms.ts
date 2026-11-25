@@ -72,8 +72,10 @@ export function platformCategoryFromSubject(subject: string): PlatformCategory {
   const text = subject.toLowerCase();
   if (text.includes("uname")) {
     const arch = /(?:^|[\s"'`$({-])-[a-z]*m\b|--machine/.test(text);
-    const os = /(?:^|[\s"'`$({-])-[a-z]*s\b|--kernel-name|--operating-system/
-      .test(text);
+    const os = /(?:^|[\s"'`$({-])-[a-z]*[so]\b|--kernel-name|--operating-system/
+      .test(
+        text,
+      );
     if (arch && !os) return "arch";
     if (os && !arch) return "os";
     return "unknown";
@@ -90,6 +92,35 @@ export function subjectLooksLikePlatform(subject: string): boolean {
   return /uname|ostype|host_os|os_name/.test(text) ||
     /\$\{?os\b/.test(text) ||
     /\$\{?arch\b/.test(text);
+}
+
+/** Category of a `uname` invocation from its flags. Bare `uname` is the OS. */
+export function unameCategory(args: readonly string[]): PlatformCategory {
+  let letters = "";
+  for (const arg of args) {
+    if (arg === "--machine") letters += "m";
+    else if (arg === "--kernel-name") letters += "s";
+    else if (arg === "--operating-system") letters += "o";
+    else if (arg === "--all" || arg === "-a") letters += "a";
+    else if (/^-[A-Za-z]+$/.test(arg)) letters += arg.slice(1);
+  }
+  if (letters.includes("a")) return "unknown";
+  const arch = letters.includes("m");
+  const os = letters.includes("s") || letters.includes("o");
+  if (arch && os) return "unknown";
+  if (arch) return "arch";
+  return "os";
+}
+
+export function unameCategoryFromInvocation(text: string): PlatformCategory {
+  return unameCategory(text.match(/--[A-Za-z-]+|-[A-Za-z]+/g) ?? []);
+}
+
+export function mergePlatformCategory(
+  left: PlatformCategory,
+  right: PlatformCategory,
+): PlatformCategory {
+  return left === right ? left : "unknown";
 }
 
 function coreToken(raw: string): string {

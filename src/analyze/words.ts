@@ -49,3 +49,11 @@ export function staticText(node: Node | null | undefined): string | null {
 export function argvOf(source: SourceMap, words: Word[]): string[] {
   return words.map((word) => displayWord(source, word));
 }
+
+/** Argument text with quotes intact, for URL operands shown as written. */
+export function rawArgvOf(
+  source: SourceMap,
+  words: { start: number; end: number }[],
+): string[] {
+  return words.map((word) => source.slice(word.start, word.end).trim());
+}

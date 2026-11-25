@@ -18,13 +18,17 @@ import {
   optionFlag,
   parseArgv,
   unwrapCommand,
+  urlOperands,
 } from "./commands.ts";
 import {
+  mergePlatformCategory,
   normalizeArchToken,
   normalizeOsToken,
   type PlatformCategory,
   platformCategoryFromSubject,
   subjectLooksLikePlatform,
+  unameCategory,
+  unameCategoryFromInvocation,
 } from "./platforms.ts";
 import { oneLine, type SourceMap } from "./source.ts";
 import type {
@@ -42,7 +46,7 @@ import type {
   SideEffectFact,
   SideEffectKind,
 } from "./types.ts";
-import { argvOf, displayWord, staticText } from "./words.ts";
+import { argvOf, displayWord, rawArgvOf, staticText } from "./words.ts";
 
 const DEFAULT_OPS = new Set<number>([
   ParExpOperator.DefaultUnset,
@@ -70,6 +74,7 @@ const APPEND_REDIRS = new Set<number>([
 ]);
 
 const SHELLS = new Set(["sh", "bash", "dash", "ash", "zsh", "ksh", "mksh"]);
+const PRINTERS = new Set(["echo", "printf", "warn", "error", "die", "say"]);
 const DOWNLOADERS = new Set(["curl", "wget", "fetch", "aria2c", "axel"]);
 const CHECKSUMS = new Set([
   "sha256sum",
@@ -188,6 +193,9 @@ export interface ExtractedFacts {
 export function extractFacts(source: SourceMap, file: File): ExtractedFacts {
   const collector = new Collector(source);
   walk(file, (node) => {
+    if (node.type === "Assign") collector.noteUnameAssignment(node);
+  });
+  walk(file, (node) => {
     collector.visit(node);
   });
   return collector.finish();
@@ -208,9 +216,34 @@ class Collector {
   readonly #integrity: IntegrityFact[] = [];
   readonly #sideEffects: SideEffectFact[] = [];
   readonly #seen = new Set<string>();
+  /** Names whose first uname assignment still describes the value. */
+  readonly #unameDerived = new Map<string, PlatformCategory>();
 
   constructor(source: SourceMap) {
     this.#source = source;
+  }
+
+  noteUnameAssignment(node: Assign): void {
+    const name = node.name?.value;
+    if (!name || !node.value) return;
+    let category: PlatformCategory | null = null;
+    walk(node.value, (child) => {
+      if (child.type !== "CallExpr" || child.args.length === 0) return;
+      const unwrapped = unwrapCommand(argvOf(this.#source, child.args));
+      if (unwrapped.command !== "uname") return;
+      const next = unameCategory(unwrapped.args);
+      category = category === null
+        ? next
+        : mergePlatformCategory(category, next);
+    });
+    if (category === null) return;
+    const previous = this.#unameDerived.get(name);
+    this.#unameDerived.set(
+      name,
+      previous === undefined
+        ? category
+        : mergePlatformCategory(previous, category),
+    );
   }
 
   visit(node: Node): void {
@@ -325,6 +358,9 @@ class Collector {
 
   #onCase(node: CaseClause): void {
     const subject = node.word ? displayWord(this.#source, node.word) : "";
+    const derived = this.#subjectCategory(subject);
+    const allowOs = derived !== "arch";
+    const allowArch = derived !== "os";
     const rawValues: string[] = [];
     const osValues: string[] = [];
     const archValues: string[] = [];
@@ -334,22 +370,23 @@ class Collector {
         const text = displayWord(this.#source, pattern).trim();
         if (text === "*" || text === "") continue;
         rawValues.push(text);
-        const os = normalizeOsToken(text);
-        const arch = normalizeArchToken(text);
+        const os = allowOs ? normalizeOsToken(text) : null;
+        const arch = allowArch ? normalizeArchToken(text) : null;
         if (os) osValues.push(os);
         if (arch) archValues.push(arch);
       }
     }
     if (isPositionalSubject(subject)) return;
     if (
-      osValues.length === 0 && archValues.length === 0 &&
+      osValues.length === 0 && archValues.length === 0 && !derived &&
       !subjectLooksLikePlatform(subject)
     ) {
       return;
     }
+    if (osValues.length === 0 && archValues.length === 0) return;
     for (const value of osValues) this.#os.add(value);
     for (const value of archValues) this.#arch.add(value);
-    const hinted = platformCategoryFromSubject(subject);
+    const hinted = derived ?? platformCategoryFromSubject(subject);
     const category = hinted !== "unknown"
       ? hinted
       : categoryFromValues(osValues, archValues);
@@ -357,9 +394,12 @@ class Collector {
       kind: "case",
       category,
       subject,
-      values: rawValues.filter((value) =>
-        normalizeOsToken(value) || normalizeArchToken(value)
-      ),
+      values: rawValues.filter((value) => {
+        if (derived === "os") return normalizeOsToken(value) !== null;
+        if (derived === "arch") return normalizeArchToken(value) !== null;
+        return normalizeOsToken(value) !== null ||
+          normalizeArchToken(value) !== null;
+      }),
       evidence: this.#evidence(node.start),
     });
   }
@@ -383,6 +423,9 @@ class Collector {
   #onTest(node: BinaryTest): void {
     const left = node.x ? this.#source.slice(node.x.start, node.x.end) : "";
     const right = node.y ? this.#source.slice(node.y.start, node.y.end) : "";
+    const recorded = this.#recordComparison(left, right, node.start) ||
+      this.#recordComparison(right, left, node.start);
+    if (recorded) return;
     const combined = `${left} ${right}`;
     if (!/OSTYPE|uname/i.test(combined)) return;
     this.#collectPlatformTokens("ostype", combined, node.start);
@@ -412,7 +455,7 @@ class Collector {
   #onRedirect(node: Redirect): void {
     if (!WRITE_REDIRS.has(node.op) || !node.word) return;
     const destination = displayWord(this.#source, node.word);
-    if (destination === "/dev/null" || destination.startsWith("&")) return;
+    if (isStreamDestination(destination)) return;
     const action: InstallAction = APPEND_REDIRS.has(node.op)
       ? "append"
       : "write";
@@ -456,7 +499,8 @@ class Collector {
       }
     }
     if (DOWNLOADERS.has(command)) {
-      this.#onDownload(command, node.start, node.end);
+      const raw = unwrapCommand(rawArgvOf(this.#source, node.args));
+      this.#onDownload(command, raw.args, node.start, node.end);
     }
     if (CHECKSUMS.has(command) || SIGNATURES.has(command)) {
       this.#addIntegrity(command, detail, node.start);
@@ -501,41 +545,69 @@ class Collector {
     }
     this.#onInstallCommand(command, args, node.start);
     this.#onBracket(command, args, detail, node.start);
+    if (!PRINTERS.has(command)) this.#onDelegated(command, args, node);
+  }
+
+  #onDelegated(command: string, args: string[], node: CallExpr): void {
+    if (DOWNLOADERS.has(command) || CHECKSUMS.has(command)) return;
+    const index = args.findIndex((arg) =>
+      DOWNLOADERS.has(arg) || CHECKSUMS.has(arg) || SIGNATURES.has(arg)
+    );
+    if (index === -1) return;
+    const inner = args[index] ?? "";
+    const raw = unwrapCommand(rawArgvOf(this.#source, node.args)).args;
+    const rawIndex = raw.findIndex((arg) => stripMatchingQuotes(arg) === inner);
+    const rawRest = rawIndex === -1 ? [] : raw.slice(rawIndex + 1);
+    const rest = args.slice(index + 1);
+    if (!looksLikeDelegatedInvocation(rest)) return;
+    if (DOWNLOADERS.has(inner)) {
+      const references = urlOperands(inner, rawRest).filter(
+        isWrittenUrlOperand,
+      );
+      const urls = collectUrls(
+        this.#source.slice(node.start, node.end),
+        this.#assignments,
+      );
+      if (urls.length === 0 && references.length === 0) return;
+      this.#onDownload(inner, rawRest, node.start, node.end);
+    }
+    if (CHECKSUMS.has(inner) || SIGNATURES.has(inner)) {
+      this.#addIntegrity(
+        inner,
+        oneLine(this.#source, node.start, node.end),
+        node.start,
+      );
+    }
   }
 
   #onUname(node: CallExpr, args: string[]): void {
-    const subject = oneLine(this.#source, node.start, node.end);
-    const arch = args.some((arg) =>
-      arg === "--machine" || /^-[a-zA-Z]*m[a-zA-Z]*$/.test(arg)
-    );
-    const os = args.some((arg) =>
-      arg === "--kernel-name" || arg === "--operating-system" ||
-      /^-[a-zA-Z]*s[a-zA-Z]*$/.test(arg)
-    );
-    const all = args.some((arg) => arg === "-a" || arg === "--all");
-    let category: PlatformCategory = "os";
-    if (all || (arch && os)) category = "unknown";
-    else if (arch) category = "arch";
     this.#addDetection({
       kind: "uname",
-      category,
-      subject,
+      category: unameCategory(args),
+      subject: oneLine(this.#source, node.start, node.end),
       values: [],
       evidence: this.#evidence(node.start),
     });
   }
 
-  #onDownload(tool: string, start: number, end: number): void {
+  #onDownload(
+    tool: string,
+    args: string[],
+    start: number,
+    end: number,
+  ): void {
     const region = this.#source.slice(start, end);
     const urls = collectUrls(region, this.#assignments);
+    const references = urlOperands(tool, args).filter(isWrittenUrlOperand);
     const key = `download|${this.#evidence(start).line}|${tool}|${
       urls.join(" ")
-    }`;
+    }|${references.join(" ")}`;
     if (this.#seen.has(key)) return;
     this.#seen.add(key);
     this.#downloads.push({
       tool,
       urls,
+      references,
       evidence: this.#evidence(start),
     });
   }
@@ -625,6 +697,11 @@ class Collector {
     if (/\bEUID\b|\bUID\b/.test(joined)) {
       this.#addPrivilege("root-check", detail, offset);
     }
+    const recorded = comparisonPairs(args).some(([left, right]) =>
+      this.#recordComparison(left, right, offset) ||
+      this.#recordComparison(right, left, offset)
+    );
+    if (recorded) return;
     if (/OSTYPE|uname/.test(joined)) {
       this.#collectPlatformTokens("test", joined, offset);
     }
@@ -661,9 +738,48 @@ class Collector {
     });
   }
 
+  #subjectCategory(text: string): PlatformCategory | null {
+    const trimmed = stripMatchingQuotes(text.trim());
+    if (/\buname\b/.test(trimmed)) return unameCategoryFromInvocation(trimmed);
+    const match = trimmed.match(/^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$/) ??
+      trimmed.match(/^\$([A-Za-z_][A-Za-z0-9_]*)$/);
+    const name = match?.[1];
+    if (!name) return null;
+    return this.#unameDerived.get(name) ?? null;
+  }
+
+  #recordComparison(subject: string, value: string, offset: number): boolean {
+    const subjectText = stripMatchingQuotes(subject.trim());
+    const category = this.#subjectCategory(subjectText);
+    if (!category) return false;
+    const token = stripMatchingQuotes(value.trim());
+    if (!token || token === "*") return false;
+    const matchedOs = category === "arch" ? null : normalizeOsToken(token);
+    const matchedArch = category === "os" ? null : normalizeArchToken(token);
+    if (!matchedOs && !matchedArch) return false;
+    if (matchedOs) this.#os.add(matchedOs);
+    if (matchedArch) this.#arch.add(matchedArch);
+    const used = category === "unknown"
+      ? categoryFromValues(
+        matchedOs ? [matchedOs] : [],
+        matchedArch ? [matchedArch] : [],
+      )
+      : category;
+    this.#addDetection({
+      kind: "test",
+      category: used,
+      subject: clipSubject(subjectText),
+      values: [token],
+      evidence: this.#evidence(offset),
+    });
+    return true;
+  }
+
   #addDetection(detection: PlatformDetection): void {
     const key =
-      `detect|${detection.kind}|${detection.evidence.line}|${detection.subject}`;
+      `detect|${detection.kind}|${detection.evidence.line}|${detection.subject}|${
+        detection.values.join(",")
+      }`;
     if (this.#seen.has(key)) return;
     this.#seen.add(key);
     this.#detections.push(detection);
@@ -740,6 +856,61 @@ class Collector {
       snippet: this.#source.lineText(location.line),
     };
   }
+}
+
+function comparisonPairs(args: string[]): Array<[string, string]> {
+  const body = args.at(-1) === "]" ? args.slice(0, -1) : args;
+  const pairs: Array<[string, string]> = [];
+  for (let index = 1; index < body.length - 1; index++) {
+    const op = body[index];
+    if (op !== "=" && op !== "==" && op !== "!=") continue;
+    const left = body[index - 1];
+    const right = body[index + 1];
+    if (!left || !right || left.startsWith("-") || right.startsWith("-")) {
+      continue;
+    }
+    pairs.push([left, right]);
+  }
+  return pairs;
+}
+
+function isStreamDestination(destination: string): boolean {
+  const text = destination.trim();
+  if (text.startsWith("&")) return true;
+  if (/^\/dev\/(?:null|stderr|stdout|stdin|tty|fd\/\d+)$/.test(text)) {
+    return true;
+  }
+  const name = text.startsWith("${")
+    ? text.slice(2, text.endsWith("}") ? -1 : undefined)
+    : text.startsWith("$")
+    ? text.slice(1)
+    : text;
+  return /^(?:stderr|stdout|stdin)$/i.test(name);
+}
+
+function looksLikeDelegatedInvocation(args: string[]): boolean {
+  return args.some((arg) => {
+    const bare = stripMatchingQuotes(arg.trim());
+    return bare.startsWith("-") || bare.includes("$") ||
+      /^https?:\/\//i.test(bare);
+  });
+}
+
+function isWrittenUrlOperand(operand: string): boolean {
+  const bare = stripMatchingQuotes(operand.trim());
+  if (!bare || bare === "-" || bare.startsWith("-")) return false;
+  if (/^\d+$/.test(bare)) return false;
+  return !/^https?:\/\//i.test(bare);
+}
+
+function stripMatchingQuotes(text: string): string {
+  if (text.length >= 2) {
+    const quote = text[0];
+    if ((quote === '"' || quote === "'") && text.endsWith(quote)) {
+      return text.slice(1, -1);
+    }
+  }
+  return text;
 }
 
 function isPositionalSubject(subject: string): boolean {

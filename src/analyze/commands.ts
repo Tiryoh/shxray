@@ -108,6 +108,14 @@ export function unwrapCommand(argv: string[]): UnwrappedCommand {
       index += flag && !flag.startsWith("-") ? 2 : 1;
       continue;
     }
+    if (base === "command" && isCommandQuery(argv, index)) {
+      return {
+        wrappers,
+        command: "command",
+        args: argv.slice(index + 1),
+        shellString: null,
+      };
+    }
     if (!WRAPPERS.has(base)) break;
     wrappers.push(base);
     index = skipWrapperFlags(base, argv, index + 1);
@@ -168,6 +176,150 @@ export function parseArgv(command: string, args: string[]): ParsedArgv {
   }
 
   return { flags, values, operands };
+}
+
+const DOWNLOAD_VALUE_FLAGS: Readonly<Record<string, readonly string[]>> = {
+  curl: [
+    "-o",
+    "-O",
+    "-d",
+    "-D",
+    "-H",
+    "-A",
+    "-e",
+    "-u",
+    "-K",
+    "-m",
+    "-w",
+    "-E",
+    "-b",
+    "-c",
+    "-F",
+    "-T",
+    "-C",
+    "-x",
+    "-U",
+    "-X",
+    "-Y",
+    "--output",
+    "--output-dir",
+    "--data",
+    "--data-raw",
+    "--data-binary",
+    "--data-ascii",
+    "--data-urlencode",
+    "--header",
+    "--user-agent",
+    "--referer",
+    "--user",
+    "--config",
+    "--retry",
+    "--retry-delay",
+    "--retry-max-time",
+    "--connect-timeout",
+    "--max-time",
+    "--write-out",
+    "--cacert",
+    "--capath",
+    "--cert",
+    "--key",
+    "--proxy",
+    "--proxy-user",
+    "--url",
+    "--request",
+    "--form",
+    "--upload-file",
+    "--continue-at",
+    "--cookie",
+    "--cookie-jar",
+    "--dump-header",
+    "--stderr",
+    "--trace",
+    "--trace-ascii",
+    "--limit-rate",
+    "--speed-limit",
+    "--speed-time",
+    "--connect-to",
+    "--resolve",
+    "--unix-socket",
+    "--proto",
+    "--proto-redir",
+  ],
+  wget: [
+    "-O",
+    "-o",
+    "-P",
+    "-t",
+    "-T",
+    "-a",
+    "-i",
+    "-B",
+    "--output-document",
+    "--output-file",
+    "--directory-prefix",
+    "--tries",
+    "--timeout",
+    "--header",
+    "--user-agent",
+    "--post-data",
+    "--post-file",
+    "--referer",
+    "--user",
+    "--password",
+    "--append-output",
+    "--input-file",
+    "--base",
+    "--limit-rate",
+  ],
+  fetch: ["-o", "--output"],
+  aria2c: ["-o", "-d", "--out", "--dir"],
+  axel: ["-o", "--output"],
+};
+
+/** Operands left after download flags that take a value. Quotes are preserved. */
+export function urlOperands(command: string, args: string[]): string[] {
+  const takes = new Set(DOWNLOAD_VALUE_FLAGS[command] ?? []);
+  const operands: string[] = [];
+  for (let index = 0; index < args.length; index++) {
+    const arg = args[index] ?? "";
+    if (arg === "--") {
+      operands.push(...args.slice(index + 1));
+      break;
+    }
+    if (arg.startsWith("--")) {
+      const equals = arg.indexOf("=");
+      if (equals !== -1) continue;
+      if (takes.has(arg) && index + 1 < args.length) index++;
+      continue;
+    }
+    if (arg.startsWith("-") && arg.length > 1 && !arg.startsWith("-$")) {
+      let takesNext = false;
+      const body = arg.slice(1);
+      for (let cursor = 0; cursor < body.length; cursor++) {
+        const char = body[cursor] ?? "";
+        if (!/[A-Za-z]/.test(char)) continue;
+        if (!takes.has(`-${char}`)) continue;
+        if (body.slice(cursor + 1).length === 0) takesNext = true;
+        break;
+      }
+      if (takesNext) index++;
+      continue;
+    }
+    operands.push(arg);
+  }
+  return operands;
+}
+
+function isCommandQuery(argv: string[], index: number): boolean {
+  const flags: string[] = [];
+  for (let cursor = index + 1; cursor < argv.length; cursor++) {
+    const token = argv[cursor] ?? "";
+    if (!token.startsWith("-") || token === "--") break;
+    flags.push(token);
+  }
+  return flags.some((flag) =>
+    flag === "-v" || flag === "-V" || flag === "--version"
+  );
 }
 
 export function flagsFromOptstring(

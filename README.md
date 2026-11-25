@@ -68,11 +68,11 @@ stdin is reserved for the script.
 - `source` — name, size, line count, shebang
 - `parse` — language variant and the first syntax error, if any
 - `summary` — `info` / `low` / `medium` / `high`, plus a one-line headline
-- `platforms` — normalized OS and architecture names, and the `uname` / `case` / `$OSTYPE` checks that produced them
+- `platforms` — normalized OS and architecture names, and the `uname`, `case`, `$OSTYPE`, and `uname`-derived comparisons that produced them
 - `interface` — CLI flags and environment variables, with defaults when they are written as literals or `${VAR:-default}` / `${VAR:=default}`
-- `installs` — destinations of `install`, `cp`, `mv`, `ln`, `mkdir`, `tee`, and file redirects
+- `installs` — destinations of `install`, `cp`, `mv`, `ln`, `mkdir`, `tee`, and file redirects other than standard streams and `/dev/null`
 - `privileges` — `sudo`, `doas`, `su`, `pkexec`, and root checks (`id -u`, `$EUID`)
-- `network` — download tools and URLs, plus checksum or signature commands
+- `network` — download tools, literal URLs, URL arguments left as written, and checksum or signature commands
 - `sideEffects` — `eval`, pipes into a shell, `sh -c`, recursive `rm`, package managers, shell rc edits, insecure downloads, permissive `chmod`
 - `notes` — limits of this static pass
 
@@ -95,7 +95,8 @@ deno task compile:smoke
 ```
 
 `deno task test` runs unit tests, CLI tests (stdin and file, `--json` and text),
-and a `deno compile` smoke test.
+and a `deno compile` smoke test. The mise and get-ros2 fixtures under
+`tests/fixtures/` are local files. Tests read them and do not download them.
 
 ## `deno compile`
 
@@ -135,6 +136,17 @@ Caveats:
   `${VAR:=default}` expansion.
 - OS and architecture tokens are normalized (`amd64` and `arm64` become
   `x86_64` and `aarch64`). The detections list keeps the script's spelling.
+  Names come from `uname` (`-s`, `-o`, `-m`), from `case` and `[` comparisons
+  on variables assigned from `uname`, and from `$OSTYPE`. Echoed labels such
+  as `macos` or `x64` are not scraped. A later assignment that does not call
+  `uname` does not drop the earlier mark.
+- Redirects to stderr, stdout, stdin, `/dev/null`, `/dev/stderr`,
+  `/dev/stdout`, or `/dev/fd/N` are not install paths. A redirect such as
+  `>> "$HOME/.bashrc"` still is.
+- A download URL that is not an absolute `http(s)` literal is reported as
+  the argument written in the script (`"$url"`). The variable is not resolved.
+  A downloader or checksum tool passed as its own argument (`run curl …`) is
+  reported. A command hidden inside a quoted string is not.
 - Recognition of commands (`curl`, `sudo`, `install`, `rm -rf`, …) is
   heuristic. Unusual wrappers can be missed or over-reported.
 - `sh-syntax` stops at the first syntax error and does not return a partial

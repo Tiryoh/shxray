@@ -2,6 +2,8 @@ import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 
 const CLI = new URL("../../src/main.ts", import.meta.url);
 const FIXTURE = new URL("../fixtures/installer.sh", import.meta.url);
+const MISE = new URL("../fixtures/mise.run.sh", import.meta.url);
+const ROS = new URL("../fixtures/get-ros2-install.sh", import.meta.url);
 const BROKEN = new URL("../fixtures/parse_error.sh", import.meta.url);
 const MARKER = "/tmp/shxray-must-not-run";
 
@@ -59,6 +61,30 @@ Deno.test("file argument --json reports installer facts", async () => {
       fact.destination.includes("$PREFIX/bin/tool")
     ),
   );
+});
+
+Deno.test("local installer fixtures are summarized without the network", async () => {
+  const mise = await runCli(["--plain", MISE.pathname]);
+  assertEquals(mise.code, 0, mise.stderr);
+  assertStringIncludes(
+    mise.stdout,
+    "operating systems: android, darwin, linux",
+  );
+  assertStringIncludes(mise.stdout, "architectures: aarch64, arm, x86_64");
+  assertStringIncludes(mise.stdout, '"$url"');
+  assertStringIncludes(mise.stdout, "https://mise.jdx.dev/releases.tsv");
+  assertEquals(mise.stdout.includes("(url not resolved)"), false);
+  assertEquals(/write\s+\$\{?stderr/.test(mise.stdout), false);
+
+  const ros = await runCli(["--plain", ROS.pathname]);
+  assertEquals(ros.code, 0, ros.stderr);
+  assertStringIncludes(ros.stdout, "operating systems: darwin, linux, windows");
+  assertStringIncludes(ros.stdout, "architectures: aarch64, x86_64");
+  assertStringIncludes(
+    ros.stdout,
+    "github.com/ros-infrastructure/ros-apt-source",
+  );
+  assertStringIncludes(ros.stdout, "sha256sum");
 });
 
 Deno.test("stdin pipe matches the file report", async () => {

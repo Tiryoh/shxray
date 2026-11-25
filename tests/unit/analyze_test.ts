@@ -3,6 +3,8 @@ import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { analyze } from "../../src/analyze/analyze.ts";
 
 const FIXTURE_URL = new URL("../fixtures/installer.sh", import.meta.url);
+const MISE_URL = new URL("../fixtures/mise.run.sh", import.meta.url);
+const ROS_URL = new URL("../fixtures/get-ros2-install.sh", import.meta.url);
 
 Deno.test("installer fixture extracts platforms, options, paths, and risk", async () => {
   const source = await Deno.readTextFile(FIXTURE_URL);
@@ -94,6 +96,88 @@ Deno.test("installer fixture extracts platforms, options, paths, and risk", asyn
   );
   assert(
     report.notes.some((note) => note.includes("was not executed")),
+  );
+});
+
+Deno.test("mise excerpt keeps uname comparisons and written URLs", async () => {
+  const report = await analyze(await Deno.readTextFile(MISE_URL), {
+    name: "mise.run.sh",
+  });
+  assertEquals(report.parse.ok, true);
+  assertEquals(report.platforms.operatingSystems, [
+    "android",
+    "darwin",
+    "linux",
+  ]);
+  assertEquals(report.platforms.architectures, ["aarch64", "arm", "x86_64"]);
+  assert(
+    report.platforms.detections.some((detection) =>
+      detection.kind === "test" && detection.values.includes("Darwin")
+    ),
+  );
+  assert(
+    report.platforms.detections.some((detection) =>
+      detection.values.includes("arm64") &&
+      detection.values.includes("aarch64") ===
+        false
+    ),
+  );
+  assert(
+    report.installs.some((fact) =>
+      fact.destination.includes(".local/bin/mise")
+    ),
+  );
+  assert(
+    report.installs.some((fact) => fact.destination.includes(".bashrc")),
+  );
+  assert(
+    report.installs.every((fact) =>
+      !/^(?:\$\{?stderr\}?|\/dev\/null|\/dev\/stderr)$/.test(fact.destination)
+    ),
+  );
+  assert(
+    report.network.downloads.some((fact) =>
+      fact.urls.includes("https://mise.jdx.dev/releases.tsv")
+    ),
+  );
+  const written = report.network.downloads.filter((fact) =>
+    fact.references.includes('"$url"')
+  );
+  assert(written.length > 0);
+  assert(written.every((fact) => fact.urls.length === 0));
+  assert(
+    report.network.downloads.every((fact) =>
+      fact.urls.length > 0 || fact.references.length > 0
+    ),
+  );
+});
+
+Deno.test("get-ros2 fixture reads uname into a later case", async () => {
+  const report = await analyze(await Deno.readTextFile(ROS_URL), {
+    name: "get-ros2-install.sh",
+  });
+  assertEquals(report.parse.ok, true);
+  assertEquals(report.platforms.operatingSystems, [
+    "darwin",
+    "linux",
+    "windows",
+  ]);
+  assertEquals(report.platforms.architectures, ["aarch64", "x86_64"]);
+  assert(
+    report.network.downloads.some((fact) =>
+      fact.references.includes('"$BOOTSTRAP_URL"')
+    ),
+  );
+  assert(
+    report.network.downloads.every((fact) =>
+      !fact.references.includes("locales") &&
+      !fact.urls.some((url) => url === "locales")
+    ),
+  );
+  assert(
+    report.installs.every((fact) =>
+      !/stderr|stdout|\/dev\/null/.test(fact.destination)
+    ),
   );
 });
 
