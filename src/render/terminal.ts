@@ -304,13 +304,25 @@ function pushCompactSteps(
   steps.forEach((step, index) => {
     lines.push(`${indent}${index + 1}. ${paint.flowLine(safe(step.text))}`);
     if (step.unresolved) lines.push(`${indent}   ${safe(step.unresolved)}`);
-    for (const child of step.children) {
-      lines.push(`${indent}   - ${paint.flowLine(safe(child.text))}`);
-      if (child.unresolved) {
-        lines.push(`${indent}     ${safe(child.unresolved)}`);
-      }
-    }
+    pushCompactChildren(lines, step.children, `${indent}   `, paint);
   });
+}
+
+function pushCompactChildren(
+  lines: string[],
+  children: FlowStep[],
+  indent: string,
+  paint: Theme,
+): void {
+  for (const child of children) {
+    lines.push(`${indent}- ${paint.flowLine(safe(child.text))}`);
+    if (child.unresolved) {
+      lines.push(`${indent}  ${safe(child.unresolved)}`);
+    }
+    if (child.children.length > 0) {
+      pushCompactChildren(lines, child.children, `${indent}  `, paint);
+    }
+  }
 }
 
 function pushDetailedSteps(

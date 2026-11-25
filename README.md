@@ -133,8 +133,12 @@ deno task compile:smoke
 ```
 
 `deno task test` runs unit tests, CLI tests (stdin and file, `--json` and text),
-and a `deno compile` smoke test. The mise and get-ros2 fixtures under
-`tests/fixtures/` are local files. Tests read them and do not download them.
+and a `deno compile` smoke test. Real-world installer fixtures under
+`tests/fixtures/` (`mise.run.sh`, `get-ros2-install.sh`, `uv-install.sh`,
+`rustup-init.sh`, `nvm-install.sh`, `get-docker.sh`, and `homebrew-install.sh`)
+are local snapshots with license notices in
+[`tests/fixtures/THIRD_PARTY_LICENSES.md`](tests/fixtures/THIRD_PARTY_LICENSES.md).
+Tests read them locally and never download or execute them.
 
 ## `deno compile`
 
@@ -239,14 +243,22 @@ paths, privilege, network activity, and side effects) before you run it.
 
 shxray's concept was inspired by
 [curl-bash-explain](https://github.com/senko/curl-bash-explain)
-([curl-bash-explain.dev](https://curl-bash-explain.dev/)), a web app that
-explains a `curl | bash` installer without running it. It fetches the script
-and returns a plain-English breakdown of the script's behavior, permissions,
-network activity, and potential risks.
+([curl-bash-explain.dev](https://curl-bash-explain.dev/)), an AI-powered web
+app that explains a `curl | bash` installer without running it. It fetches the
+script and uses an LLM to return a plain-English breakdown of the script's
+behavior, permissions, network activity, and potential risks.
+
+shxray currently performs local static analysis only, without executing the
+script or calling external APIs. In the future, shxray plans to support
+combining this deterministic static analysis with optional LLM-based
+explanations, so both structured facts and natural-language context are
+available together.
 
 ## Status
 
-Initial prototype. The report schema is version 1. Adding fields is allowed;
-removing or redefining a field bumps the version.
+Initial prototype (currently static analysis only; optional LLM-assisted
+explanation alongside static analysis is planned). The report schema is
+version 1. Adding fields is allowed; removing or redefining a field bumps the
+version.
 
 Architecture decisions are in [`docs/adr/`](docs/adr/README.md).

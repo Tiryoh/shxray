@@ -5,6 +5,14 @@ import { analyze } from "../../src/analyze/analyze.ts";
 const FIXTURE_URL = new URL("../fixtures/installer.sh", import.meta.url);
 const MISE_URL = new URL("../fixtures/mise.run.sh", import.meta.url);
 const ROS_URL = new URL("../fixtures/get-ros2-install.sh", import.meta.url);
+const UV_URL = new URL("../fixtures/uv-install.sh", import.meta.url);
+const RUSTUP_URL = new URL("../fixtures/rustup-init.sh", import.meta.url);
+const NVM_URL = new URL("../fixtures/nvm-install.sh", import.meta.url);
+const DOCKER_URL = new URL("../fixtures/get-docker.sh", import.meta.url);
+const HOMEBREW_URL = new URL(
+  "../fixtures/homebrew-install.sh",
+  import.meta.url,
+);
 
 Deno.test("installer fixture extracts platforms, options, paths, and risk", async () => {
   const source = await Deno.readTextFile(FIXTURE_URL);
@@ -509,4 +517,71 @@ fi
   );
   assertStringIncludes(flowText, "Removes $download_dir with rm -rf.");
   assertStringIncludes(flowText, "[after_finish_help] Prints messages");
+});
+
+Deno.test("real-world installer fixtures parse and extract key facts offline", async () => {
+  // uv
+  const uv = await analyze(await Deno.readTextFile(UV_URL), {
+    name: "uv-install.sh",
+  });
+  assertEquals(uv.parse.ok, true);
+  assert(uv.platforms.operatingSystems.includes("linux"));
+  assert(uv.platforms.operatingSystems.includes("darwin"));
+  assert(uv.platforms.architectures.includes("x86_64"));
+  assert(uv.platforms.architectures.includes("aarch64"));
+  assert(uv.network.downloads.some((d) => d.tool === "curl"));
+  assert(uv.network.integrity.some((i) => i.tool === "sha256sum"));
+  assert(uv.installs.every((i) => !/^\$\{?[@*]\}?$/.test(i.destination)));
+
+  // rustup
+  const rustup = await analyze(await Deno.readTextFile(RUSTUP_URL), {
+    name: "rustup-init.sh",
+  });
+  assertEquals(rustup.parse.ok, true);
+  assert(rustup.platforms.operatingSystems.includes("linux"));
+  assert(rustup.platforms.architectures.includes("aarch64"));
+  const rustupFlow = flatten(rustup.flow.steps).join("\n");
+  assertStringIncludes(rustupFlow, "[main]");
+  assertStringIncludes(rustupFlow, "chmod u+x");
+  assert(rustup.network.downloads.some((d) => d.tool === "curl"));
+
+  // nvm
+  const nvm = await analyze(await Deno.readTextFile(NVM_URL), {
+    name: "nvm-install.sh",
+  });
+  assertEquals(nvm.parse.ok, true);
+  assert(nvm.network.downloads.some((d) => d.tool === "curl"));
+  assert(nvm.network.downloads.every((d) => d.tool !== "fetch"));
+  const nvmFlow = flatten(nvm.flow.steps).join("\n");
+  assertStringIncludes(nvmFlow, "nvm.sh");
+
+  // get.docker.com
+  const docker = await analyze(await Deno.readTextFile(DOCKER_URL), {
+    name: "get-docker.sh",
+  });
+  assertEquals(docker.parse.ok, true);
+  assertEquals(docker.flow.entry, "do_install");
+  assert(docker.privileges.some((p) => p.kind === "sudo"));
+  assert(docker.privileges.some((p) => p.kind === "su"));
+  assert(
+    docker.sideEffects.some((s) => s.kind === "package-manager"),
+  );
+  const dockerSummary = docker.summary.sentences.join("\n");
+  assertStringIncludes(dockerSummary, "apt-get");
+  assertStringIncludes(dockerSummary, "sudo");
+  const dockerFlow = flatten(docker.flow.steps).join("\n");
+  assertStringIncludes(dockerFlow, "apt-get -qq update");
+
+  // Homebrew
+  const brew = await analyze(await Deno.readTextFile(HOMEBREW_URL), {
+    name: "homebrew-install.sh",
+  });
+  assertEquals(brew.parse.ok, true);
+  assertEquals(brew.platforms.operatingSystems, ["darwin", "linux"]);
+  assertEquals(brew.platforms.architectures, ["aarch64", "x86_64"]);
+  assert(brew.privileges.some((p) => p.kind === "sudo"));
+  assert(brew.network.downloads.every((d) => d.tool !== "fetch"));
+  const brewFlow = flatten(brew.flow.steps).join("\n");
+  assertStringIncludes(brewFlow, "/etc/paths.d/homebrew");
+  assert(!brewFlow.includes("with fetch"));
 });

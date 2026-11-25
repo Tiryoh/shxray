@@ -218,7 +218,10 @@ export function extractFacts(
 ): ExtractedFacts {
   const collector = new Collector(source, printerNames);
   walk(file, (node) => {
-    if (node.type === "Assign") collector.noteUnameAssignment(node);
+    if (node.type === "Assign") {
+      collector.noteUnameAssignment(node);
+      collector.noteShellRunnerAssignment(node);
+    }
   });
   walk(file, (node) => {
     collector.visit(node);
@@ -244,10 +247,26 @@ class Collector {
   readonly #seen = new Set<string>();
   /** Names whose first uname assignment still describes the value. */
   readonly #unameDerived = new Map<string, PlatformCategory>();
+  /** Variables assigned shell-c / privilege-runner strings (e.g. `sh_c='sudo -E sh -c'`). */
+  readonly #shellRunners = new Map<string, Set<PrivilegeKind>>();
 
   constructor(source: SourceMap, printerNames: ReadonlySet<string>) {
     this.#source = source;
     this.#printerNames = printerNames;
+  }
+
+  noteShellRunnerAssignment(node: Assign): void {
+    const name = node.name?.value;
+    if (!name || !node.value) return;
+    const lit = staticText(node.value)?.trim();
+    if (!lit) return;
+    const match = lit.match(
+      /^(?:(sudo|doas|pkexec|su)\b.*?\s+)?(?:(?:sh|bash|dash)\s+-c|-c)\b/,
+    );
+    if (!match) return;
+    const privs = this.#shellRunners.get(name) ?? new Set<PrivilegeKind>();
+    if (match[1] && isPrivilegeKind(match[1])) privs.add(match[1]);
+    this.#shellRunners.set(name, privs);
   }
 
   noteUnameAssignment(node: Assign): void {
@@ -514,6 +533,28 @@ class Collector {
     const args = unwrapped.args;
     if (!command) return;
 
+    // Recognize invocations through a shell-runner variable (e.g. `$sh_c 'apt-get install ...'`).
+    const runnerVar = command.match(/^\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?$/)?.[1];
+    if (runnerVar && this.#shellRunners.has(runnerVar)) {
+      const privs = this.#shellRunners.get(runnerVar)!;
+      for (const priv of privs) {
+        this.#addPrivilege(priv, detail, node.start);
+      }
+      this.#addSideEffect(
+        "shell-command-string",
+        dynamicSeverity(args.join(" ")),
+        detail,
+        node.start,
+      );
+      const joinedArgs = args.join(" ");
+      for (const pm of PACKAGE_MANAGERS) {
+        if (new RegExp(`\\b${pm}\\b`).test(joinedArgs)) {
+          this.#addSideEffect("package-manager", "medium", detail, node.start);
+          break;
+        }
+      }
+    }
+
     if (command === "uname") this.#onUname(node, args);
     if (
       command === "id" &&
@@ -580,9 +621,26 @@ class Collector {
     node: CallExpr,
   ): void {
     if (DOWNLOADERS.has(command) || CHECKSUMS.has(command)) return;
-    const index = args.findIndex((arg) =>
-      DOWNLOADERS.has(arg) || CHECKSUMS.has(arg) || SIGNATURES.has(arg)
-    );
+    const index = args.findIndex((arg, idx) => {
+      if (arg === "fetch") {
+        // Never mistake `git fetch`, `${USABLE_GIT} fetch`, `hg fetch`, etc.
+        // for the FreeBSD `fetch` downloader binary.
+        if (
+          command === "git" || command === "hg" || command === "docker" ||
+          command === "brew" || command === "npm" || command === "cargo"
+        ) {
+          return false;
+        }
+        const prev = args[idx - 1] ?? "";
+        if (
+          /(?:^|[\/_{])git\b/i.test(prev) ||
+          args.slice(0, idx).some((a) => /(?:^|[\/_{])git\b/i.test(a))
+        ) {
+          return false;
+        }
+      }
+      return DOWNLOADERS.has(arg) || CHECKSUMS.has(arg) || SIGNATURES.has(arg);
+    });
     if (index === -1) return;
     const inner = args[index] ?? "";
     const rawRest = rawArgs.slice(index + 1);
@@ -699,7 +757,7 @@ class Collector {
     }
     if (parsed.operands.length < 2) return;
     const destination = parsed.operands[parsed.operands.length - 1];
-    if (!destination) return;
+    if (!destination || /^\$\{?[@*]\}?$/.test(destination)) return;
     this.#addInstall(installAction(command), destination, mode, offset);
   }
 

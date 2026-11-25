@@ -31,8 +31,8 @@ import type {
 } from "./types.ts";
 import { argvOf, displayWord, rawArgvOf, unquote } from "./words.ts";
 
-const COMPACT_STEP_BUDGET = 160;
-const DETAILED_STEP_BUDGET = 220;
+const COMPACT_STEP_BUDGET = 400;
+const DETAILED_STEP_BUDGET = 500;
 const MAX_CALL_DEPTH = 6;
 
 const WRITE_REDIRS = new Set<number>([
@@ -252,6 +252,7 @@ class FlowBuilder {
   readonly #mode: "compact" | "detailed";
   readonly #locale: Locale;
   readonly #expanded = new Set<string>();
+  readonly #expandedCalls = new Set<string>();
   readonly #packageManagers = new Set<string>();
   readonly #announcedVars = new Set<string>();
   #installsDeb = false;
@@ -620,11 +621,16 @@ class FlowBuilder {
         return this.#walk(info.stmts, [name], childScope);
       }
 
-      const isReusableHelper = info.stmts.length <= 25;
-      if (this.#expanded.has(name) && !isReusableHelper) {
+      const isReusableHelper = info.stmts.length <= 25 && args.length > 0;
+      const callKey = `${name}\0${args.join("\0")}`;
+      if (
+        this.#expanded.has(name) &&
+        (!isReusableHelper || this.#expandedCalls.has(callKey))
+      ) {
         return [];
       }
       this.#expanded.add(name);
+      this.#expandedCalls.add(callKey);
       this.#budget--;
 
       const bodySteps = this.#walk(info.stmts, [...stack, name], childScope);
@@ -769,6 +775,37 @@ class FlowBuilder {
       };
     }
     if (command.includes("$")) {
+      const runnerVar = command.match(/^\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?$/)
+        ?.[1];
+      const runner = runnerVar
+        ? this.#meta.shellRunners.get(runnerVar)
+        : undefined;
+      if (runner) {
+        const snippet = args.join(" ").trim();
+        for (const pm of PACKAGE_MANAGERS) {
+          if (new RegExp(`\\b${pm}\\b`).test(snippet)) {
+            this.#packageManagers.add(pm);
+          }
+        }
+        const privs = runner.privileges.length > 0
+          ? runner.privileges
+          : wrappers.filter((w) =>
+            w === "sudo" || w === "doas" || w === "su" || w === "pkexec"
+          );
+        const body = snippet
+          ? (this.#ja
+            ? `シェルコマンドを実行 (${command}): ${clip(snippet, 100)}。`
+            : `Runs shell command (${command}): ${clip(snippet, 100)}.`)
+          : (this.#ja
+            ? `シェルコマンドを実行 (${command})。`
+            : `Runs shell command (${command}).`);
+        if (privs.length === 0) return { text: body };
+        return {
+          text: this.#ja
+            ? `${joinAnd(privs, "ja")} で ${body}`
+            : `With ${joinAnd(privs, "en")}, ${lowerFirst(body)}`,
+        };
+      }
       return {
         text: this.#ja
           ? `動的コマンド ${clip(command, 60)} を実行。`
@@ -1385,6 +1422,7 @@ class FlowBuilder {
               unresolved: null,
               line: flat[0]!.line,
               children: [],
+              tag: flat[0]!.tag,
             }];
           }
           const contLabel = this.#ja
@@ -2152,8 +2190,11 @@ function flattenToolAvailabilityIf(
     }
     const cond = condText(source, current.cond);
     const toolMatch = cond.match(
-      /^(?:command\s+-v|type|which)\s+([a-z0-9_-]+)/,
-    );
+      /^(?:command\s+-v|type|which|[A-Za-z0-9_]+(?:_has|_exists)|check_cmd|command_exists)\s+["']?([a-z0-9_-]+)["']?/,
+    ) ??
+      cond.match(
+        /^\[\s+["']?\$\{?[A-Za-z_][A-Za-z0-9_]*\}?["']?\s*=\s*["']?([a-z0-9_-]+)["']?\s*\]$/,
+      );
     if (!toolMatch?.[1] || !DOWNLOADERS.has(toolMatch[1])) return null;
     arms.push({ tool: toolMatch[1], stmts: current.then });
     current = current.else;
@@ -2301,8 +2342,8 @@ function prettifyCond(
     return locale === "ja" ? "非 root (id -u != 0)" : "non-root (id -u != 0)";
   }
   const simple = trimmed
-    .replace(/^\[\s+/, "")
-    .replace(/\s+\]$/, "")
+    .replace(/\[\[\s+([^\]]+?)\s+\]\]/g, "$1")
+    .replace(/\[\s+([^\]]+?)\s+\]/g, "$1")
     .replace(/"/g, "")
     .replace(/\s+-eq\s+/g, " = ")
     .replace(/\s+-ne\s+/g, " != ");
@@ -2352,6 +2393,12 @@ function delegatedArgv(
     }
     const base = raw.split("/").pop() ?? raw;
     if (!KNOWN_TOOLS.has(base)) continue;
+    if (
+      base === "fetch" &&
+      args.slice(0, index).some((prev) => /(?:^|[\/_{])git\b/i.test(prev))
+    ) {
+      continue;
+    }
     if (DOWNLOADERS.has(base) || CHECKSUMS.has(base)) {
       const next = unquote(args[index + 1] ?? "");
       const invocation = next.startsWith("-") || next.startsWith("$") ||

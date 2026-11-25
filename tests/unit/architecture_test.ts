@@ -43,7 +43,8 @@ async function scanForFixtureFetches(
   }
   if (!/\.(ts|json|yml|yaml|md)$/.test(path)) return;
   const lines = (await Deno.readTextFile(path)).split("\n");
-  const fetch = /(?:curl|wget|fetch)\b[^\n]*(?:mise\.run|get-ros2\.com)/;
+  const fetch =
+    /(?:curl|wget|fetch)\b[^\n]*(?:mise\.run|get-ros2\.com|astral\.sh\/uv|sh\.rustup\.rs|nvm-sh\/nvm|get\.docker\.com|Homebrew\/install)/;
   for (const [index, line] of lines.entries()) {
     if (fetch.test(line)) hits.push(`${path}:${index + 1}`);
   }

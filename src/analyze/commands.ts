@@ -82,7 +82,7 @@ export function basename(word: string): string {
 export function unwrapCommand(argv: string[]): UnwrappedCommand {
   const wrappers: string[] = [];
   let index = 0;
-  if (/^\$\{?SUDO\}?$/.test(argv[0] ?? "")) {
+  if (/^\$\{?SUDO(?:\[[@*]\])?\}?$/.test(argv[0] ?? "")) {
     wrappers.push("sudo");
     index = 1;
   }

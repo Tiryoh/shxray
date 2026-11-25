@@ -126,9 +126,16 @@ export interface FunctionInfo {
   printerCaseSummary: { subject: string; patterns: string[] } | null;
 }
 
+export interface ShellRunnerInfo {
+  name: string;
+  privileges: string[];
+}
+
 export interface ScriptMeta {
   functions: Map<string, FunctionInfo>;
   bindings: Map<string, VarBinding>;
+  /** Variables assigned shell-c / privilege-runner strings (e.g. `sh_c='sudo -E sh -c'`). */
+  shellRunners: Map<string, ShellRunnerInfo>;
 }
 
 /**
@@ -138,7 +145,8 @@ export interface ScriptMeta {
 export function analyzeScriptMeta(source: SourceMap, file: File): ScriptMeta {
   const functions = analyzeFunctions(source, file);
   const bindings = collectBindings(source, file, functions);
-  return { functions, bindings };
+  const shellRunners = collectShellRunners(source, file);
+  return { functions, bindings, shellRunners };
 }
 
 export function bodyStmtsOf(decl: FuncDecl): Stmt[] {
@@ -195,6 +203,10 @@ function analyzeFunctions(
     changed = false;
     for (const [name, stmts] of raw) {
       if (isPrinter.get(name)) continue;
+      // Large orchestrator functions (e.g. `main`) that pass CLI flags `"$@"`
+      // to a downloaded binary via `ignore "$_file" "$@"` are not generic
+      // command-forwarding wrappers.
+      if (name === "main" || stmts.length > 12) continue;
       const delegated = delegatedForwarding(
         source,
         stmts,
@@ -475,6 +487,31 @@ function extractPrinterCase(
     }
   }
   return null;
+}
+
+function collectShellRunners(
+  source: SourceMap,
+  file: File,
+): Map<string, ShellRunnerInfo> {
+  const runners = new Map<string, Set<string>>();
+  walk(file, (node) => {
+    if (node.type !== "Assign") return;
+    const name = node.name?.value;
+    if (!name || !node.value) return;
+    const text = displayWord(source, node.value).trim();
+    const match = text.match(
+      /^(?:(sudo|doas|pkexec|su)\b.*?\s+)?(?:(?:sh|bash|dash)\s+-c|-c)\b/,
+    );
+    if (!match) return;
+    const privs = runners.get(name) ?? new Set<string>();
+    if (match[1]) privs.add(match[1]);
+    runners.set(name, privs);
+  });
+  const out = new Map<string, ShellRunnerInfo>();
+  for (const [name, privs] of runners) {
+    out.set(name, { name, privileges: [...privs].sort() });
+  }
+  return out;
 }
 
 function collectBindings(
