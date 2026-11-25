@@ -159,6 +159,50 @@ Caveats:
 - Heredocs, `eval` of a computed string, and binaries invoked through
   variables other than `$SUDO` are only partly visible.
 
+## Related tools
+
+These tools have different goals. If your use case fits, please check them out
+too. shxray is one option for a different purpose: reading an install script
+from a file or from stdin, where `bash` would sit in `curl … | bash`, and
+reporting its intent (platforms, options, environment variables, install
+paths, privilege, network activity, and side effects) before you run it.
+
+- [Tirith](https://tirith.sh/) ([GitHub](https://github.com/sheeki03/tirith))
+  intercepts shell commands, pasted content, and scanned files before they
+  execute. It looks for homograph URLs, obfuscated payloads, credential
+  exfiltration, malicious AI skills and configs, and known-bad packages,
+  domains, and IPs from a signed threat-intelligence database.
+- [vet](https://github.com/vet-run/vet) is a safety net for `curl | bash`. It
+  downloads the remote script, shows what changed since the last time you ran
+  that script, lints it with ShellCheck when ShellCheck is installed, and
+  asks for your approval before it executes.
+- [shellsentry](https://github.com/3leaps/shellsentry) assesses a shell script
+  for risky patterns before you execute it. It detects pipe-to-shell, `eval`
+  of external input, base64 decode-and-execute, hidden Unicode, and privilege
+  escalation, and it can report in text, JSON, or SARIF. Analysis is local.
+- [ShellCheck](https://github.com/koalaman/shellcheck) is a static analysis
+  tool for bash/sh scripts. It gives warnings and suggestions, with the goals
+  of clarifying beginner syntax issues, intermediate semantic problems, and
+  subtle pitfalls that can make a working script fail later. Run
+  `shellcheck yourscript`, or paste a script on
+  [ShellCheck.net](https://www.shellcheck.net).
+- [explainshell](https://www.explainshell.com/) matches each argument of a
+  command line to the help text in its man page. Write a command on the site
+  to see the matching help text.
+- [curl-review](https://github.com/ytspar/curl-review) downloads a `curl | sh`
+  install script so you can view it with syntax highlighting, and can run an
+  AI security review before execution. An interactive shell hook can rewrite
+  a pipe-to-shell command into `curl-review` before it runs.
+
+## Acknowledgements
+
+shxray's concept was inspired by
+[curl-bash-explain](https://github.com/senko/curl-bash-explain)
+([curl-bash-explain.dev](https://curl-bash-explain.dev/)), a web app that
+explains a `curl | bash` installer without running it. It fetches the script
+and returns a plain-English breakdown of the script's behavior, permissions,
+network activity, and potential risks.
+
 ## Status
 
 Initial prototype. The report schema is version 1. Adding fields is allowed;
