@@ -107,7 +107,7 @@ Deno.test("installer fixture extracts platforms, options, paths, and risk", asyn
     report.summary.sentences.some((sentence) => sentence.includes("sudo")),
   );
   const installerFlow = flatten(report.flow.steps).join("\n");
-  const downloadAt = installerFlow.indexOf("Downloads \"$URL\" with curl.");
+  const downloadAt = installerFlow.indexOf('Downloads "$URL" with curl.');
   const installAt = installerFlow.indexOf("installs to $PREFIX/bin/tool.");
   assert(downloadAt !== -1 && installAt !== -1 && downloadAt < installAt);
   assertEquals(report.flow.note, null);
