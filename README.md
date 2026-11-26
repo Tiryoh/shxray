@@ -148,9 +148,8 @@ defined by [commit-provenance](https://github.com/Tiryoh/commit-provenance) and
 checked by the `commit-msg` hook in
 [`.pre-commit-config.yaml`](.pre-commit-config.yaml) (`v0.1.0`). Install it
 once per clone with `prek install` (`pre-commit install` when using
-pre-commit). CI checks the same trailers on pull requests and on pushes to
-`main`. A commit with no `Assisted-by` line is valid. The one-line instruction
-for agents is in [`AGENTS.md`](AGENTS.md).
+pre-commit). A commit with no `Assisted-by` line is valid. The one-line
+instruction for agents is in [`AGENTS.md`](AGENTS.md).
 
 ## `deno compile`
 
