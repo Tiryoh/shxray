@@ -262,3 +262,14 @@ version 1. Adding fields is allowed; removing or redefining a field bumps the
 version.
 
 Architecture decisions are in [`docs/adr/`](docs/adr/README.md).
+
+## Third-party licenses
+
+[`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md) lists third-party code
+that `deno compile` embeds in the binary: the `sh-syntax` package, the
+`mvdan/sh` parser and Go runtime inside its Wasm, the Go `wasm_exec` file
+that package vendors, and the Deno runtime linked by the compiler.
+
+[`tests/fixtures/THIRD_PARTY_LICENSES.md`](tests/fixtures/THIRD_PARTY_LICENSES.md)
+lists the installer snapshots under `tests/fixtures/`. Tests read those files
+locally and do not download or execute them.

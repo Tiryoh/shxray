@@ -4,18 +4,82 @@ The files under `tests/fixtures/` include local snapshots of real-world
 installer scripts used exclusively for offline static-analysis tests. Tests,
 tasks, and CI never execute or download these scripts.
 
-- `mise.run.sh` — Excerpt of https://github.com/jdx/mise (MIT)
+- `mise.run.sh` — Excerpt of https://github.com/jdx/mise (MIT, Copyright (c)
+  2025 Jeff Dickey)
 - `get-ros2-install.sh` — https://get-ros2.com/install.sh (MIT, Copyright (c)
   2026 MrBearing)
-- `uv-install.sh` — https://github.com/astral-sh/uv (MIT OR Apache-2.0)
-- `rustup-init.sh` — https://github.com/rust-lang/rustup (MIT OR Apache-2.0)
+- `uv-install.sh` — https://github.com/astral-sh/uv (MIT OR Apache-2.0;
+  redistributed here under the MIT option)
+- `rustup-init.sh` — https://github.com/rust-lang/rustup (MIT OR Apache-2.0;
+  redistributed here under the MIT option)
 - `nvm-install.sh` — https://github.com/nvm-sh/nvm (MIT)
 - `get-docker.sh` — https://github.com/docker/docker-install (Apache-2.0)
 - `homebrew-install.sh` — https://github.com/Homebrew/install (BSD-2-Clause)
 
 ---
 
-## uv (MIT)
+## mise (MIT)
+
+Excerpt of <https://github.com/jdx/mise>. License text from
+<https://github.com/jdx/mise/blob/156db1130c2757aaaf6e53686148d8b9b0791ae7/LICENSE>.
+
+```text
+MIT License
+
+Copyright (c) 2025 Jeff Dickey
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+## get-ros2 (MIT)
+
+License text from
+<https://github.com/MrBearing/get-ros2/blob/3bc7dba4418c4f45017831b1804a75b670af14e3/LICENSE>.
+
+```text
+MIT License
+
+Copyright (c) 2026 MrBearing
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+## uv (redistributed under the MIT option of MIT OR Apache-2.0)
+
+`uv-install.sh` is redistributed under the MIT option of the upstream MIT OR
+Apache-2.0 license.
 
 ```text
 MIT License
@@ -41,7 +105,10 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-## rustup (MIT)
+## rustup (redistributed under the MIT option of MIT OR Apache-2.0)
+
+`rustup-init.sh` is redistributed under the MIT option of the upstream MIT OR
+Apache-2.0 license.
 
 ```text
 Copyright (c) 2016 The Rust Project Developers
