@@ -1,0 +1,8 @@
+default_install_hook_types:
+  - commit-msg
+
+repos:
+  - repo: https://github.com/Tiryoh/commit-provenance
+    rev: v0.1.0
+    hooks:
+      - id: commit-provenance-check

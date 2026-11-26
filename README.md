@@ -140,6 +140,18 @@ are local snapshots with license notices in
 [`tests/fixtures/THIRD_PARTY_LICENSES.md`](tests/fixtures/THIRD_PARTY_LICENSES.md).
 Tests read them locally and never download or execute them.
 
+## Commit provenance
+
+Commits made with AI assistance end with an `Assisted-by` trailer
+(`harness=<harness-id>/<version> model=<provider>/<model-id>`). The format is
+defined by [commit-provenance](https://github.com/Tiryoh/commit-provenance) and
+checked by the `commit-msg` hook in
+[`.pre-commit-config.yaml`](.pre-commit-config.yaml) (`v0.1.0`). Install it
+once per clone with `prek install` (`pre-commit install` when using
+pre-commit). CI checks the same trailers on pull requests and on pushes to
+`main`. A commit with no `Assisted-by` line is valid. The one-line instruction
+for agents is in [`AGENTS.md`](AGENTS.md).
+
 ## `deno compile`
 
 Verified with Deno 2.9.8:
