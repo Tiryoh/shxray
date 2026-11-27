@@ -277,3 +277,15 @@ Architecture decisions are in [`docs/adr/`](docs/adr/README.md).
 ## License
 
 MIT License — see [`LICENSE`](LICENSE).
+
+## Third-party licenses
+
+[`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md) lists third-party code
+that `deno compile` embeds in the binary: the `sh-syntax` package, the
+`mvdan/sh` parser and Go runtime inside its Wasm, the Go `wasm_exec` file
+that package vendors, and the Deno project's own MIT license. Libraries the
+Deno binary links, including V8, are not restated there.
+
+[`tests/fixtures/THIRD_PARTY_LICENSES.md`](tests/fixtures/THIRD_PARTY_LICENSES.md)
+lists the installer snapshots under `tests/fixtures/`. Tests read those files
+locally and do not download or execute them.
