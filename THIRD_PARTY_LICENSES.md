@@ -1,16 +1,37 @@
 # Third-party licenses
 
-Notices for code that `deno compile` embeds in the shxray binary:
+This file covers third-party source this repository includes directly, or
+that `deno compile` embeds verbatim from this project's dependency graph.
+That is the `sh-syntax` 0.8.7 package (its JavaScript and Wasm) and the
+mvdan/sh and Go code inside that Wasm. Full texts for those components are
+below.
+
+`deno compile` also embeds the Deno runtime. That runtime is covered
+separately in [Deno runtime](#deno-runtime), which points to the notices the
+Deno project maintains.
+
+Installer scripts copied under `tests/fixtures/` have their own file,
+[`tests/fixtures/THIRD_PARTY_LICENSES.md`](tests/fixtures/THIRD_PARTY_LICENSES.md).
 
 ```bash
 deno compile --allow-read --allow-env --output dist/shxray src/main.ts
 ```
 
 `deno.lock` pins `npm:sh-syntax@0.8.7`. That package has no further npm
-dependencies. The sections below are the license texts copied from the
-upstream `LICENSE` files at the locked revisions. `jsr:@std/assert@1.0.19`
-and its dependency `jsr:@std/internal@1.0.14` are imported only from `tests/`.
-`src/main.ts` does not import them, so they are not in the compiled binary.
+dependencies. `jsr:@std/assert@1.0.19` and its dependency
+`jsr:@std/internal@1.0.14` are imported only from `tests/`. `src/main.ts`
+does not import them, so they are not in the compiled binary.
+
+Copyright lines in the table are copied from the license files at the pinned
+revisions. A line is included only when that file contains it.
+
+## Summary
+
+| Component | License | Copyright | Upstream |
+| --- | --- | --- | --- |
+| sh-syntax 0.8.7 | MIT | `Copyright (c) 2021 UnTS` | <https://github.com/un-ts/sh-syntax/blob/v0.8.7/LICENSE> |
+| mvdan/sh `6f0102cc00b2` | BSD-3-Clause | `Copyright (c) 2016, Daniel Martí. All rights reserved.` | <https://github.com/mvdan/sh/blob/6f0102cc00b2024fdffb1f6b8a15d0d586cd5324/LICENSE> |
+| Go 1.27.4 (`wasm_exec` and the Wasm runtime) | BSD-3-Clause | `Copyright 2009 The Go Authors.` | <https://github.com/golang/go/blob/go1.27.4/LICENSE> |
 
 ## sh-syntax 0.8.7 (MIT)
 
@@ -137,46 +158,12 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
-## Deno-authored code (MIT)
+## Deno runtime
 
-The text below is the license of Deno-authored code in Deno 2.9.8, the
-version named in the README and used in CI. `deno compile` links the Deno
-executable's runtime into the binary. That runtime is the compiler, not a row
-in `deno.json` or `deno.lock`. This text does not cover every library that
-runtime links.
+`deno compile` embeds the Deno runtime in the binary, alongside the
+components above. Deno is MIT-licensed by the Deno authors
+(`Copyright 2018-2026 the Deno authors`). The runtime bundles V8 and other
+dependencies. Notices for those components are maintained upstream:
 
-Deno 2.9.8's CLI defaults to the `v8` feature
-(<https://github.com/denoland/deno/blob/v2.9.8/cli/Cargo.toml>). That feature
-enables `deno_v8`'s `v8` feature, which depends on crate `v8` 150.4.0
-(`rusty_v8`). The `LICENSE` in `rusty_v8` tag `v150.4.0` is the bindings'
-MIT license, `Copyright (c) 2018-2019 the Deno authors`
-(<https://github.com/denoland/rusty_v8/blob/v150.4.0/LICENSE>). The same tag
-vendors the V8 engine and other Chromium components as submodules
-(<https://github.com/denoland/rusty_v8/blob/v150.4.0/.gitmodules>). Those
-licenses are not copied here.
-
-- Upstream: <https://github.com/denoland/deno/blob/v2.9.8/LICENSE.md>
-- Copyright: `Copyright 2018-2026 the Deno authors`
-
-```text
-MIT License
-
-Copyright 2018-2026 the Deno authors
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of
-this software and associated documentation files (the "Software"), to deal in
-the Software without restriction, including without limitation the rights to
-use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
-the Software, and to permit persons to whom the Software is furnished to do so,
-subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
-FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
-COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
-IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
-CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-```
+- <https://github.com/denoland/deno/blob/main/LICENSE.md>
+- <https://github.com/denoland/deno/issues/13515>
