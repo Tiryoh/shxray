@@ -137,11 +137,23 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
-## Deno runtime (MIT)
+## Deno-authored code (MIT)
 
-`deno compile` links the Deno runtime into the executable. That runtime is
-the compiler, not a row in `deno.json` or `deno.lock`. The text below is the
-license of Deno 2.9.8, the version named in the README and used in CI.
+The text below is the license of Deno-authored code in Deno 2.9.8, the
+version named in the README and used in CI. `deno compile` links the Deno
+executable's runtime into the binary. That runtime is the compiler, not a row
+in `deno.json` or `deno.lock`. This text does not cover every library that
+runtime links.
+
+Deno 2.9.8's CLI defaults to the `v8` feature
+(<https://github.com/denoland/deno/blob/v2.9.8/cli/Cargo.toml>). That feature
+enables `deno_v8`'s `v8` feature, which depends on crate `v8` 150.4.0
+(`rusty_v8`). The `LICENSE` in `rusty_v8` tag `v150.4.0` is the bindings'
+MIT license, `Copyright (c) 2018-2019 the Deno authors`
+(<https://github.com/denoland/rusty_v8/blob/v150.4.0/LICENSE>). The same tag
+vendors the V8 engine and other Chromium components as submodules
+(<https://github.com/denoland/rusty_v8/blob/v150.4.0/.gitmodules>). Those
+licenses are not copied here.
 
 - Upstream: <https://github.com/denoland/deno/blob/v2.9.8/LICENSE.md>
 - Copyright: `Copyright 2018-2026 the Deno authors`
