@@ -1,6 +1,6 @@
 # Deno 2.9.8 runtime notices
 
-Full license texts for the libraries linked or embedded in the Deno 2.9.8 runtime that `deno compile` puts into the shxray binary. The summary table, the method, and the components that are vendored but not linked are in [`THIRD_PARTY_LICENSES.md`](../../THIRD_PARTY_LICENSES.md). Rust crate notices are in [`deno-2.9.8-crate-notices.md`](deno-2.9.8-crate-notices.md).
+Full license texts for libraries linked into compiled binaries by the Deno runtime. These notices are relevant only when redistributing `deno compile` binaries. The summary table, the method, and the components that are vendored but not linked are in [`README.md`](README.md) in this directory. Rust crate notices are in [`deno-2.9.8-crate-notices.md`](deno-2.9.8-crate-notices.md). Source this repository embeds from its own dependency graph is in [`THIRD_PARTY_LICENSES.md`](../../THIRD_PARTY_LICENSES.md).
 
 Each text below is copied from the file at the linked revision. Copyright lines are the lines in those files. Nothing in this file was written in as a copyright that the source file did not contain.
 
