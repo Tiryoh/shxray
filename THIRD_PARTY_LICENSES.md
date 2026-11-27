@@ -1,13 +1,15 @@
 # Third-party licenses
 
-This file covers one category: third-party source this repository includes
-directly, or that `deno compile` embeds verbatim from this project's
-dependency graph. That is the `sh-syntax` 0.8.7 package (its JavaScript and
-Wasm) and the mvdan/sh and Go code inside that Wasm.
+This file covers third-party source this repository includes directly, or
+that `deno compile` embeds verbatim from this project's dependency graph.
+That is the `sh-syntax` 0.8.7 package (its JavaScript and Wasm) and the
+mvdan/sh and Go code inside that Wasm. Full texts for those components are
+below.
 
-Libraries linked into compiled binaries by the Deno runtime are a different
-category. They matter only when redistributing `deno compile` binaries, and
-their notices are in [`docs/third_party/`](docs/third_party/README.md).
+`deno compile` also embeds the Deno runtime. That runtime is covered
+separately in [Deno runtime](#deno-runtime), which points to the notices the
+Deno project maintains.
+
 Installer scripts copied under `tests/fixtures/` have their own file,
 [`tests/fixtures/THIRD_PARTY_LICENSES.md`](tests/fixtures/THIRD_PARTY_LICENSES.md).
 
@@ -155,3 +157,13 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
+
+## Deno runtime
+
+`deno compile` embeds the Deno runtime in the binary, alongside the
+components above. Deno is MIT-licensed by the Deno authors
+(`Copyright 2018-2026 the Deno authors`). The runtime bundles V8 and other
+dependencies. Notices for those components are maintained upstream:
+
+- <https://github.com/denoland/deno/blob/main/LICENSE.md>
+- <https://github.com/denoland/deno/issues/13515>

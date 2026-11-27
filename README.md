@@ -280,14 +280,12 @@ MIT License — see [`LICENSE`](LICENSE).
 
 ## Third-party licenses
 
-[`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md) lists source this
-repository includes directly, or that `deno compile` embeds verbatim from
-this project's dependency graph: `sh-syntax` 0.8.7 and the mvdan/sh and Go
-code inside its Wasm.
-
-[`docs/third_party/`](docs/third_party/README.md) lists libraries the Deno
-runtime links into a compiled binary, and those notices matter only when
-redistributing `deno compile` binaries.
+[`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md) lists third-party source
+this repository includes directly: `sh-syntax` 0.8.7 (MIT), mvdan/sh
+(BSD-3-Clause), and the Go code inside its Wasm (BSD-3-Clause). The Deno
+runtime that `deno compile` embeds is MIT-licensed by the Deno authors; that
+file refers to the notices Deno maintains for V8 and the other dependencies
+bundled in the runtime.
 
 [`tests/fixtures/THIRD_PARTY_LICENSES.md`](tests/fixtures/THIRD_PARTY_LICENSES.md)
 lists the installer snapshots under `tests/fixtures/`. Tests read those files
