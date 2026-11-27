@@ -283,8 +283,11 @@ MIT License — see [`LICENSE`](LICENSE).
 [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md) lists third-party code
 that `deno compile` embeds in the binary: the `sh-syntax` package, the
 `mvdan/sh` parser and Go runtime inside its Wasm, the Go `wasm_exec` file
-that package vendors, and the Deno project's own MIT license. Libraries the
-Deno binary links, including V8, are not restated there.
+that package vendors, the Deno project's own MIT license, and the libraries
+linked into the Deno 2.9.8 runtime. The V8 and Chromium texts are in
+[`docs/third_party/deno-2.9.8-runtime-notices.md`](docs/third_party/deno-2.9.8-runtime-notices.md).
+The Rust crate list is in
+[`docs/third_party/deno-2.9.8-crate-notices.md`](docs/third_party/deno-2.9.8-crate-notices.md).
 
 [`tests/fixtures/THIRD_PARTY_LICENSES.md`](tests/fixtures/THIRD_PARTY_LICENSES.md)
 lists the installer snapshots under `tests/fixtures/`. Tests read those files
