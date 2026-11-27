@@ -273,3 +273,7 @@ version 1. Adding fields is allowed; removing or redefining a field bumps the
 version.
 
 Architecture decisions are in [`docs/adr/`](docs/adr/README.md).
+
+## License
+
+MIT License — see [`LICENSE`](LICENSE).

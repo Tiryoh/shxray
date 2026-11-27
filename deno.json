@@ -1,6 +1,7 @@
 {
   "name": "@tiryoh/shxray",
   "version": "0.1.0",
+  "license": "MIT",
   "exports": {
     ".": "./src/main.ts",
     "./analyze": "./src/analyze/mod.ts"
