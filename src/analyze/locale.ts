@@ -46,6 +46,8 @@ export function analysisNotes(locale: Locale): string[] {
       "静的解析のみです（スクリプトは実行していません）。",
       "すべての分岐と関数本体を検査します。到達可能性は計算しません。",
       "動的な値（ダウンロード URL 引数など）は記述どおり表示します。単一代入や ${VAR:-default} / ${VAR:=default} のデフォルトは併記します。",
+      "インストール先は、それを決める変数やオプションと、ソースに書かれた既定値を結びます。静的に決まらない既定値は推測しません。",
+      "ログファイルへの書き込み（.log、log ディレクトリ、ログを示す変数名）はインストール先に含めません。",
       "OS とアーキテクチャ名は正規化しています（amd64 -> x86_64、arm64 -> aarch64）。",
       "処理の流れはトップレベルからのリテラル関数呼び出しを辿り、分岐の候補を列挙します。どの分岐が実行されるかは決めません。",
     ];
@@ -54,6 +56,8 @@ export function analysisNotes(locale: Locale): string[] {
     "Static analysis only; the script was not executed.",
     "Every branch and function body is inspected. Reachability is not computed.",
     "Dynamic values are shown as written, including download URL arguments. Defaults are reported for literals and for ${VAR:-default} / ${VAR:=default}.",
+    "Install paths name the variable or option that controls them and the default written in the script. A default that is not written is unknown and is not guessed.",
+    "Log-file writes (a .log basename, a log directory, or a log variable name) are omitted from install paths.",
     "Operating system and architecture names are normalized (amd64 -> x86_64, arm64 -> aarch64).",
     "The flow follows literal function calls from the top level and lists every branch. It does not decide which branch runs.",
   ];

@@ -1,6 +1,7 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 
 import { analyze } from "../../src/analyze/analyze.ts";
+import { isLogWriteDestination } from "../../src/analyze/log_writes.ts";
 
 const FIXTURE_URL = new URL("../fixtures/installer.sh", import.meta.url);
 const MISE_URL = new URL("../fixtures/mise.run.sh", import.meta.url);
@@ -122,7 +123,38 @@ Deno.test("installer fixture extracts platforms, options, paths, and risk", asyn
     installerFlow,
     "https://example.com/tool/releases/download/",
   );
-  assertStringIncludes(installerFlow, "PREFIX default: /usr/local");
+  assertStringIncludes(
+    installerFlow,
+    "PREFIX defaults to /usr/local; override with PREFIX=... or --prefix",
+  );
+  const prefixInstall = report.installs.find((fact) =>
+    fact.action === "install" && fact.destination.includes("$PREFIX/bin/tool")
+  );
+  assertEquals(prefixInstall?.controls, [
+    {
+      kind: "environment",
+      name: "PREFIX",
+      defaultValue: "/usr/local",
+      defaultReason: null,
+      envOverride: "PREFIX",
+      assigns: null,
+    },
+    {
+      kind: "option",
+      name: "--prefix",
+      defaultValue: null,
+      defaultReason: "unknown default",
+      envOverride: null,
+      assigns: "PREFIX",
+    },
+  ]);
+  const ja = await analyze(source, { name: "installer.sh", locale: "ja" });
+  assert(
+    ja.summary.sentences.some((sentence) =>
+      sentence.includes("PREFIX の既定値は /usr/local") &&
+      sentence.includes("上書きは PREFIX=... または --prefix")
+    ),
+  );
   assertEquals(report.flow.note, null);
   assert(report.flow.detailed && report.flow.detailed.length > 0);
 });
@@ -214,6 +246,21 @@ Deno.test("get-ros2 fixture reads uname into a later case", async () => {
   );
   assert(
     report.summary.sentences.some((sentence) => sentence.includes("apt-get")),
+  );
+  assert(
+    report.sideEffects.some((fact) =>
+      fact.kind === "package-manager" && fact.detail.includes("apt-get")
+    ),
+  );
+  assert(
+    report.installs.every((fact) =>
+      !/LOG_FILE|STEP_LOG|\.log$|\/var\/log\//.test(fact.destination)
+    ),
+  );
+  assert(
+    report.summary.sentences.every((sentence) =>
+      !sentence.includes("LOG_FILE") && !sentence.includes("STEP_LOG")
+    ),
   );
   assert(
     report.summary.sentences.some((sentence) => sentence.includes("sudo")),
@@ -708,9 +755,12 @@ fi
   const summaryText = report.summary.sentences.join("\n");
   assertStringIncludes(
     summaryText,
-    "$install_path (default: $HOME/.local/bin/tool)",
+    "$install_path (install_path defaults to $HOME/.local/bin/tool; override with TOOL_INSTALL_PATH=...)",
   );
-  assertStringIncludes(summaryText, "$install_dir (dirname of $install_path)");
+  assertStringIncludes(
+    summaryText,
+    "$install_dir (install_dir dirname of $install_path)",
+  );
 
   // Compact flow is concise and readable without printer or boilerplate spam.
   const flowText = flatten(report.flow.steps).join("\n");
@@ -799,4 +849,228 @@ Deno.test("real-world installer fixtures parse and extract key facts offline", a
   const brewFlow = flatten(brew.flow.steps).join("\n");
   assertStringIncludes(brewFlow, "/etc/paths.d/homebrew");
   assert(!brewFlow.includes("with fetch"));
+});
+
+Deno.test("install paths link an unknown default and a flag without guessing", async () => {
+  const report = await analyze(`
+    cp ./tool "$CUSTOM/bin/tool"
+    DEST=$(mktemp -d)
+    cp ./tool "$DEST/tool"
+    case "$1" in
+      --dir) TARGET="$2"; shift ;;
+    esac
+    cp ./tool "$TARGET/bin/tool"
+  `);
+  const custom = report.installs.find((fact) =>
+    fact.destination === "$CUSTOM/bin/tool"
+  );
+  assertEquals(custom?.controls, [
+    {
+      kind: "environment",
+      name: "CUSTOM",
+      defaultValue: null,
+      defaultReason: "unknown default",
+      envOverride: "CUSTOM",
+      assigns: null,
+    },
+  ]);
+  assert(
+    report.summary.sentences.some((sentence) =>
+      sentence.includes(
+        "CUSTOM unknown default; override with CUSTOM=...",
+      )
+    ),
+  );
+  const dynamic = report.installs.find((fact) =>
+    fact.destination === "$DEST/tool"
+  );
+  assertEquals(dynamic?.controls[0]?.defaultValue, null);
+  assertEquals(dynamic?.controls[0]?.defaultReason, "unknown default");
+  assertEquals(dynamic?.controls[0]?.envOverride, null);
+  const flagged = report.installs.find((fact) =>
+    fact.destination === "$TARGET/bin/tool"
+  );
+  assertEquals(flagged?.controls[0]?.defaultReason, "unknown default");
+  assertEquals(flagged?.controls[1], {
+    kind: "option",
+    name: "--dir",
+    defaultValue: null,
+    defaultReason: "unknown default",
+    envOverride: null,
+    assigns: "TARGET",
+  });
+  assert(
+    report.summary.sentences.some((sentence) =>
+      sentence.includes("TARGET unknown default; override with --dir")
+    ),
+  );
+});
+
+Deno.test("option values are not treated as TLS flags", async () => {
+  const report = await analyze(`
+    curl -o/tmp/sdk https://example.com/file
+    curl -H --insecure https://example.com/header
+    curl --output --insecure https://example.com/output
+    curl -- --insecure
+    curl -k https://example.com/insecure
+    curl -kfSL https://example.com/bundle
+    wget --header --no-check-certificate https://example.com/wget-header
+    wget --no-check-certificate https://example.com/wget-insecure
+  `);
+  const insecure = report.sideEffects.filter((fact) =>
+    fact.kind === "insecure-download"
+  ).map((fact) => fact.detail);
+  assertEquals(insecure.length, 3);
+  assert(insecure.some((detail) => detail.includes("curl -k ")));
+  assert(insecure.some((detail) => detail.includes("curl -kfSL")));
+  assert(
+    insecure.some((detail) => detail.includes("wget --no-check-certificate")),
+  );
+  assert(insecure.every((detail) => !detail.includes("-o/tmp/sdk")));
+  assert(insecure.every((detail) => !detail.includes("-H --insecure")));
+  assert(insecure.every((detail) => !detail.includes("--output --insecure")));
+  assert(insecure.every((detail) => !detail.includes("curl -- --insecure")));
+  assert(insecure.every((detail) => !detail.includes("wget --header")));
+});
+
+Deno.test("downloader help and version queries are not downloads", async () => {
+  const onlyVersion = await analyze("curl --version\nwget --help\naria2c -v\n");
+  assertEquals(onlyVersion.network.downloads, []);
+  assertEquals(onlyVersion.summary.risk, "info");
+  assert(
+    onlyVersion.summary.sentences.every((sentence) =>
+      !/download/i.test(sentence)
+    ),
+  );
+  assertEquals(flatten(onlyVersion.flow.steps), []);
+
+  const real = await analyze(`
+    URL=https://example.com/from-config
+    curl -fsSL "$URL"
+    curl -v https://example.com/verbose
+    curl -o --version https://example.com/filename
+    wget -O "$file" https://example.com/wget
+  `);
+  const urls = real.network.downloads.flatMap((fact) => fact.urls);
+  assert(urls.includes("https://example.com/from-config"));
+  assert(urls.includes("https://example.com/verbose"));
+  assert(urls.includes("https://example.com/filename"));
+  assert(urls.includes("https://example.com/wget"));
+  assert(
+    real.network.downloads.every((fact) =>
+      !fact.evidence.snippet.includes("--help")
+    ),
+  );
+});
+
+Deno.test("target-directory options are the install destination in both flows", async () => {
+  const report = await analyze(`
+    cp -t /usr/local/bin ./tool
+    cp --target-directory=/opt/bin ./other
+    install -t /usr/bin ./tool
+    mv -t /usr/local/bin ./moved
+    ln -t /usr/local/bin ./linked
+    cp -t/usr/local/bin ./attached
+    cp ./tool /usr/local/bin/tool
+  `);
+  assertEquals(
+    report.installs.map((fact) => `${fact.action} ${fact.destination}`),
+    [
+      "copy /usr/local/bin",
+      "copy /opt/bin",
+      "install /usr/bin",
+      "move /usr/local/bin",
+      "link /usr/local/bin",
+      "copy /usr/local/bin",
+      "copy /usr/local/bin/tool",
+    ],
+  );
+  const compact = flatten(report.flow.steps).join("\n");
+  const detailed = flatten(report.flow.detailed ?? []).join("\n");
+  for (const flow of [compact, detailed]) {
+    assertStringIncludes(flow, "Copies a file to /usr/local/bin.");
+    assertStringIncludes(flow, "Copies a file to /opt/bin.");
+    assertStringIncludes(flow, "Installs to /usr/bin.");
+    assertStringIncludes(flow, "Moves a file to /usr/local/bin.");
+    assertStringIncludes(flow, "Links a file to /usr/local/bin.");
+    assertStringIncludes(flow, "Copies a file to /usr/local/bin/tool.");
+    assert(!flow.includes("./tool"));
+    assert(!flow.includes("./other"));
+    assert(!flow.includes("./moved"));
+    assert(!flow.includes("./linked"));
+    assert(!flow.includes("./attached"));
+  }
+});
+
+Deno.test("log-file writes are omitted from installs and Also writes", async () => {
+  assertEquals(isLogWriteDestination("$LOG_FILE"), true);
+  assertEquals(isLogWriteDestination('"$STEP_LOG"'), true);
+  assertEquals(isLogWriteDestination("$WORK_DIR/install.log"), true);
+  assertEquals(isLogWriteDestination("/var/log/syslog"), true);
+  assertEquals(isLogWriteDestination("/var/logs/daemon"), true);
+  assertEquals(isLogWriteDestination("$logfile"), true);
+  assertEquals(isLogWriteDestination("$stepLog"), true);
+  assertEquals(isLogWriteDestination("$CATALOG"), false);
+  assertEquals(isLogWriteDestination("$LOGICAL_PATH"), false);
+  assertEquals(isLogWriteDestination("$LOGNAME"), false);
+  assertEquals(isLogWriteDestination("$PREFIX/bin/logtool"), false);
+  assertEquals(isLogWriteDestination("$HOME/.bashrc"), false);
+  assertEquals(isLogWriteDestination("$STATUS_FILE"), false);
+
+  const report = await analyze(`
+    LOG_FILE=/tmp/install.log
+    STEP_LOG=/tmp/step.log
+    echo a >> "$LOG_FILE"
+    echo b >> "$STEP_LOG"
+    echo c >> /var/log/syslog
+    echo d >> "$HOME/.bashrc"
+    echo e > "$STATUS_FILE"
+    echo f > "$WORK_DIR/bootstrap.sha256"
+    echo g > "$CATALOG"
+    tee -a "$LOG_FILE" "$HOME/.profile"
+    install -m 755 ./tool "$PREFIX/bin/logtool"
+  `);
+  const destinations = report.installs.map((fact) => fact.destination);
+  assert(destinations.every((dest) => !isLogWriteDestination(dest)));
+  assert(destinations.some((dest) => dest.includes(".bashrc")));
+  assert(destinations.some((dest) => dest.includes(".profile")));
+  assert(destinations.some((dest) => dest.includes("STATUS_FILE")));
+  assert(destinations.some((dest) => dest.includes("bootstrap.sha256")));
+  assert(destinations.some((dest) => dest.includes("CATALOG")));
+  assert(destinations.some((dest) => dest.includes("logtool")));
+  const text = report.summary.sentences.join("\n");
+  assert(!text.includes("LOG_FILE"));
+  assert(!text.includes("STEP_LOG"));
+  assert(!text.includes("/var/log"));
+  assert(text.includes("Also writes"));
+  assert(text.includes("STATUS_FILE"));
+
+  const logsOnly = await analyze('echo hi >> "$LOG_FILE"\n');
+  assertEquals(logsOnly.installs, []);
+  assertEquals(logsOnly.summary.risk, "info");
+  assert(
+    logsOnly.summary.sentences.some((sentence) =>
+      sentence.includes("No install destination")
+    ),
+  );
+});
+
+Deno.test("run_root apt-get is a package-manager side effect", async () => {
+  const report = await analyze(`
+    run() { "$@"; }
+    run_root() {
+      step=$1
+      shift
+      run "$step" sudo "$@"
+    }
+    run_root "Install packages" apt-get install -y curl
+    run echo apt-get
+  `);
+  const managers = report.sideEffects.filter((fact) =>
+    fact.kind === "package-manager"
+  );
+  assertEquals(managers.length, 1);
+  assertStringIncludes(managers[0]!.detail, "apt-get install -y curl");
+  assert(!managers[0]!.detail.includes("echo apt-get"));
+  assertEquals(report.summary.risk, "medium");
 });

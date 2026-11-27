@@ -57,12 +57,47 @@ export type InstallAction =
   | "write"
   | "append";
 
+/**
+ * A variable or CLI option that changes an install destination.
+ * `defaultValue` is a value written in the script. It is null when that
+ * value cannot be determined statically; `defaultReason` then says why.
+ * `unknown default` means the analyzer did not guess a fallback.
+ */
+export interface InstallControl {
+  kind: "environment" | "option";
+  /** Variable name (`PREFIX`) or flag (`--prefix`). */
+  name: string;
+  /** Static default, as written. Null when none is known. */
+  defaultValue: string | null;
+  /**
+   * Why `defaultValue` is null, or a derivation such as `dirname of $path`.
+   * Null when `defaultValue` is a literal or a written parameter default.
+   * The unknown case uses the stable English token `unknown default`
+   * in every locale.
+   */
+  defaultReason: string | null;
+  /**
+   * Environment variable a caller can set (`PREFIX` in `PREFIX=...`).
+   * Null when the script assigns the name unconditionally, and for options.
+   */
+  envOverride: string | null;
+  /**
+   * For an option, the variable that option assigns. Null otherwise.
+   */
+  assigns: string | null;
+}
+
 export interface InstallFact {
   action: InstallAction;
   /** Destination as written. Variables are not resolved. */
   destination: string;
   mode: string | null;
   evidence: Evidence;
+  /**
+   * Variables and options that control `destination`.
+   * Empty when the path is a literal or only names ignored shell parameters.
+   */
+  controls: InstallControl[];
 }
 
 export type PrivilegeKind = "sudo" | "doas" | "su" | "pkexec" | "root-check";

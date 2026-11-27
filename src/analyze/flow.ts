@@ -18,13 +18,27 @@ import {
   type ScriptMeta,
   type VarBinding,
 } from "./bindings.ts";
-import { commandVerifies, unwrapCommand, urlOperands } from "./commands.ts";
+import {
+  commandVerifies,
+  isDownloaderQuery,
+  parseArgv,
+  placementDestination,
+  unwrapCommand,
+  urlOperands,
+} from "./commands.ts";
+import {
+  buildInstallControlContext,
+  controlsForDestination,
+  formatInstallControls,
+  type InstallControlContext,
+} from "./install_controls.ts";
 import { joinAnd, joinClauses, joinOr } from "./locale.ts";
 import { subjectLooksLikePlatform } from "./platforms.ts";
 import { oneLine, type SourceMap } from "./source.ts";
 import type {
   DownloadFact,
   FlowStep,
+  InstallControl,
   InstallFact,
   IntegrityFact,
   Locale,
@@ -216,7 +230,6 @@ export function summarySentences(
     primary,
     managers,
     observed.installsDeb,
-    bindings,
     announced,
     locale,
   );
@@ -229,7 +242,7 @@ export function summarySentences(
     );
   }
   if (incidental.length > 0) {
-    sentences.push(writeSentence(incidental, bindings, announced, locale));
+    sentences.push(writeSentence(incidental, announced, locale));
   }
   const network = networkSentence(
     facts.downloads ?? [],
@@ -255,6 +268,7 @@ class FlowBuilder {
   readonly #expandedCalls = new Set<string>();
   readonly #packageManagers = new Set<string>();
   readonly #announcedVars = new Set<string>();
+  readonly #controlContext: InstallControlContext;
   #installsDeb = false;
   #budget: number;
   #truncated = false;
@@ -275,6 +289,11 @@ class FlowBuilder {
     this.#budget = mode === "compact"
       ? COMPACT_STEP_BUDGET
       : DETAILED_STEP_BUDGET;
+    this.#controlContext = buildInstallControlContext(
+      source,
+      file,
+      meta.bindings,
+    );
   }
 
   get #ja(): boolean {
@@ -849,6 +868,7 @@ class FlowBuilder {
   ): { text: string; tag?: StepTag } | null {
     if (PRINTERS.has(command)) return null;
     if (DOWNLOADERS.has(command)) {
+      if (isDownloaderQuery(command, args)) return null;
       const targets = urlOperands(command, rawArgs);
       const annotated = targets.map((target) =>
         this.#annotateTarget(clip(target))
@@ -950,8 +970,8 @@ class FlowBuilder {
       command === "install" || command === "cp" || command === "mv" ||
       command === "ln"
     ) {
-      const dest = lastOperand(args);
-      const annotated = dest ? this.#annotateTarget(clip(dest)) : null;
+      const dest = placementDestination(command, args);
+      const annotated = dest ? this.#annotateInstall(clip(dest)) : null;
       if (this.#ja) {
         const verb = command === "install"
           ? "へインストール"
@@ -980,8 +1000,9 @@ class FlowBuilder {
       };
     }
     if (command === "mkdir") {
-      const dest = lastOperand(args);
-      const annotated = dest ? this.#annotateTarget(clip(dest)) : null;
+      const parsed = parseArgv(command, args);
+      const dest = parsed.operands[parsed.operands.length - 1] ?? null;
+      const annotated = dest ? this.#annotateInstall(clip(dest)) : null;
       return {
         text: this.#ja
           ? (annotated ? `${annotated} を作成。` : "ディレクトリを作成。")
@@ -989,8 +1010,8 @@ class FlowBuilder {
       };
     }
     if (command === "tee") {
-      const dest = args.filter((arg) => !arg.startsWith("-")).map((item) =>
-        this.#annotateTarget(clip(item))
+      const dest = parseArgv(command, args).operands.map((item) =>
+        this.#annotateInstall(clip(item))
       );
       return {
         text: this.#ja
@@ -1939,7 +1960,7 @@ class FlowBuilder {
     }
     if (destinations.length === 0) return null;
     const target = joinAnd(
-      destinations.map((dest) => this.#annotateTarget(clip(dest, 120))),
+      destinations.map((dest) => this.#annotateInstall(clip(dest, 120))),
       this.#locale,
     );
     if (this.#ja) {
@@ -1952,6 +1973,17 @@ class FlowBuilder {
     const hint = formatVarAnnotation(
       target,
       this.#meta.bindings,
+      this.#announcedVars,
+      this.#locale,
+    );
+    return hint ? `${target} ${hint}` : target;
+  }
+
+  #annotateInstall(target: string): string {
+    const controls = controlsForDestination(target, this.#controlContext);
+    const hint = formatInstallControls(
+      target,
+      controls,
       this.#announcedVars,
       this.#locale,
     );
@@ -2579,11 +2611,20 @@ function isIncidentalWrite(fact: InstallFact): boolean {
   return true;
 }
 
+function annotateInstallDestination(
+  destination: string,
+  controls: readonly InstallControl[],
+  announced: Set<string>,
+  locale: Locale,
+): string {
+  const hint = formatInstallControls(destination, controls, announced, locale);
+  return hint ? `${destination} ${hint}` : destination;
+}
+
 function installSentence(
   places: InstallFact[],
   managers: string[],
   installsDeb: boolean,
-  bindings: Map<string, VarBinding>,
   announced: Set<string>,
   locale: Locale,
 ): string | null {
@@ -2597,8 +2638,15 @@ function installSentence(
   const order = ["install", "copy", "move", "link", "mkdir", "append", "write"];
   for (const action of order) {
     const destinations = unique(grouped.get(action) ?? []).map((dest) => {
-      const hint = formatVarAnnotation(dest, bindings, announced, locale);
-      return hint ? `${dest} ${hint}` : dest;
+      const fact = places.find((item) =>
+        item.action === action && item.destination === dest
+      );
+      return annotateInstallDestination(
+        dest,
+        fact?.controls ?? [],
+        announced,
+        locale,
+      );
     });
     if (destinations.length === 0) continue;
     parts.push(placeClause(action, destinations, locale));
@@ -2668,14 +2716,18 @@ function placeClause(
 
 function writeSentence(
   facts: InstallFact[],
-  bindings: Map<string, VarBinding>,
   announced: Set<string>,
   locale: Locale,
 ): string {
   const destinations = unique(facts.map((fact) => fact.destination)).map(
     (dest) => {
-      const hint = formatVarAnnotation(dest, bindings, announced, locale);
-      return hint ? `${dest} ${hint}` : dest;
+      const fact = facts.find((item) => item.destination === dest);
+      return annotateInstallDestination(
+        dest,
+        fact?.controls ?? [],
+        announced,
+        locale,
+      );
     },
   );
   if (locale === "ja") {

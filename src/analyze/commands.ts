@@ -180,6 +180,29 @@ export function parseArgv(command: string, args: string[]): ParsedArgv {
   return { flags, values, operands };
 }
 
+/**
+ * Destination for `install`, `cp`, `mv`, and `ln`.
+ * `-t` / `--target-directory` wins over the last operand.
+ * `install -d` treats every operand as a directory, so a single operand is kept.
+ */
+export function placementDestination(
+  command: string,
+  args: string[],
+): string | null {
+  const parsed = parseArgv(command, args);
+  const directoryMode = command === "install" &&
+    parsed.flags.some((flag) => flag === "-d" || flag === "--directory");
+  if (!directoryMode) {
+    const target = parsed.values.get("-t") ??
+      parsed.values.get("--target-directory") ?? null;
+    if (target) return target;
+    if (parsed.operands.length < 2) return null;
+  }
+  const destination = parsed.operands[parsed.operands.length - 1];
+  if (!destination || /^\$\{?[@*]\}?$/.test(destination)) return null;
+  return destination;
+}
+
 const DOWNLOAD_VALUE_FLAGS: Readonly<Record<string, readonly string[]>> = {
   curl: [
     "-o",
@@ -374,22 +397,89 @@ export function commandVerifies(command: string, args: string[]): boolean {
   return false;
 }
 
+const DOWNLOADER_QUERY_FLAGS: Readonly<Record<string, ReadonlySet<string>>> = {
+  curl: new Set(["--version", "--help", "--manual", "-V", "-h", "-M"]),
+  wget: new Set(["--version", "--help", "-V", "-h"]),
+  fetch: new Set(["--version", "--help"]),
+  aria2c: new Set(["--version", "--help", "-v", "-h"]),
+  axel: new Set(["--version", "--help", "-V", "-h"]),
+};
+
+/**
+ * Visit flags that belong to `command`, skipping values those flags consume
+ * and stopping at `--`. `onFlag` returns true to stop the scan.
+ */
+function scanOwnFlags(
+  command: string,
+  args: string[],
+  onFlag: (flag: string) => boolean,
+): void {
+  const takes = new Set(DOWNLOAD_VALUE_FLAGS[command] ?? []);
+  for (let index = 0; index < args.length; index++) {
+    const word = unquote(args[index] ?? "");
+    if (word === "--") return;
+    if (word.startsWith("--")) {
+      const equals = word.indexOf("=");
+      const key = equals === -1 ? word : word.slice(0, equals);
+      if (onFlag(key)) return;
+      if (equals === -1 && takes.has(key)) index++;
+      continue;
+    }
+    if (word.startsWith("-") && word.length > 1 && !word.startsWith("-$")) {
+      const body = word.slice(1);
+      for (let cursor = 0; cursor < body.length; cursor++) {
+        const char = body[cursor] ?? "";
+        if (!/[A-Za-z0-9]/.test(char)) break;
+        const flag = `-${char}`;
+        if (onFlag(flag)) return;
+        if (takes.has(flag)) {
+          if (body.slice(cursor + 1).length === 0) index++;
+          break;
+        }
+      }
+    }
+  }
+}
+
 export function disablesTlsVerification(
   command: string,
   args: string[],
 ): boolean {
-  if (command === "curl") {
-    return args.some((arg) => {
-      const word = unquote(arg);
-      if (word === "--insecure") return true;
-      return word.startsWith("-") && !word.startsWith("--") &&
-        word.includes("k");
-    });
-  }
-  if (command === "wget") {
-    return args.some((arg) => unquote(arg) === "--no-check-certificate");
-  }
-  return false;
+  const long = command === "curl"
+    ? "--insecure"
+    : command === "wget"
+    ? "--no-check-certificate"
+    : null;
+  const short = command === "curl" ? "-k" : null;
+  if (!long) return false;
+  let found = false;
+  scanOwnFlags(command, args, (flag) => {
+    if (flag === long || flag === short) {
+      found = true;
+      return true;
+    }
+    return false;
+  });
+  return found;
+}
+
+/**
+ * True for help/version invocations (`curl --version`, `wget --help`).
+ * A value that merely looks like those flags (`curl -o --version URL`) is a
+ * download, not a query.
+ */
+export function isDownloaderQuery(command: string, args: string[]): boolean {
+  const flags = DOWNLOADER_QUERY_FLAGS[command];
+  if (!flags) return false;
+  let found = false;
+  scanOwnFlags(command, args, (flag) => {
+    if (flags.has(flag)) {
+      found = true;
+      return true;
+    }
+    return false;
+  });
+  return found;
 }
 
 function isCommandQuery(argv: string[], index: number): boolean {

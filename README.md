@@ -74,7 +74,7 @@ stdin is reserved for the script.
 - `flow` — concise, side-effect-focused steps in execution order (`flow.steps`), with `flow.entry` set when a single top-level entry function is unwrapped and `flow.detailed` holding the fuller call/branch tree for `--verbose`. `flow.note` is set when the top level does not call the functions it defines
 - `platforms` — normalized OS and architecture names, and the `uname`, `case`, `$OSTYPE`, and `uname`-derived comparisons that produced them
 - `interface` — CLI flags and environment variables, with defaults when they are written as literals or `${VAR:-default}` / `${VAR:=default}`
-- `installs` — destinations of `install`, `cp`, `mv`, `ln`, `mkdir`, `tee`, and file redirects other than standard streams and `/dev/null`
+- `installs` — destinations of `install`, `cp`, `mv`, `ln`, `mkdir`, `tee`, and file redirects other than standard streams, `/dev/null`, and log files. For `cp`, `mv`, `ln`, and `install`, `-t` / `--target-directory` is the destination. Each entry has `controls`: the environment variable or CLI option that changes that path, plus the default written in the script. `defaultValue` is null and `defaultReason` is `unknown default` when the default cannot be determined. A derivation such as `dirname of $install_path` is a `defaultReason`, not a guessed path. `defaultReason` is English in every locale. `$HOME` and other shell parameters are not controls. `envOverride` is the variable a caller sets (`PREFIX` in `PREFIX=...`); it is null when the script assigns the name unconditionally. An option's `assigns` is the variable that option sets, and an option's own default is `unknown default`
 - `privileges` — `sudo`, `doas`, `su`, `pkexec`, and root checks (`id -u`, `$EUID`)
 - `network` — download tools, literal URLs, URL arguments left as written, and checksum or signature commands
 - `sideEffects` — `eval`, pipes into a shell, `sh -c`, recursive `rm`, package managers, shell rc edits, insecure downloads, permissive `chmod`
@@ -94,7 +94,7 @@ are printed when you pass `--verbose`.
 
 ```text
 Summary
-  Installs to $PREFIX/bin/tool, creates $PREFIX/share/tool, appends $HOME/.bashrc, and runs apt-get.
+  Installs to $PREFIX/bin/tool (PREFIX defaults to /usr/local; override with PREFIX=... or --prefix), creates $PREFIX/share/tool, appends $HOME/.bashrc, and runs apt-get.
   Checks whether it is root and may run commands with sudo.
   Recognizes operating systems darwin, freebsd, and linux, and architectures aarch64 and x86_64.
 
@@ -107,10 +107,13 @@ Flow
   10. Checks a checksum with sha256sum.
   11. Verifies a signature with gpg.
   12. Extracts an archive with tar.
-  13. With sudo, installs to $PREFIX/bin/tool.
+  13. With sudo, installs to $PREFIX/bin/tool (PREFIX defaults to /usr/local; override with PREFIX=... or --prefix).
   14. Creates $PREFIX/share/tool.
   15. Appends $HOME/.bashrc.
 ```
+
+The parenthetical is repeated for the first install step only. Later steps that use
+the same variable omit it. `--json` still records `controls` on every install.
 
 Branches are listed, not chosen. A step says so when the script's `if` or
 `case` does not pick a path statically. If the top level never calls the
@@ -189,7 +192,11 @@ Caveats:
 - Values produced by command substitution, indirect expansion, or the
   environment outside the script are not resolved. A default is reported only
   when it is a literal assignment used once, or a `${VAR:-default}` /
-  `${VAR:=default}` expansion.
+  `${VAR:=default}` expansion. An install path is linked to that variable, or
+  to a CLI option that assigns it. If neither a written default nor a
+  derivation such as `dirname` is visible, the report says `unknown default`
+  and does not invent one. A value that is only `$OPTARG` or another single
+  variable is not a default.
 - OS and architecture tokens are normalized (`amd64` and `arm64` become
   `x86_64` and `aarch64`). The detections list keeps the script's spelling.
   Names come from `uname` (`-s`, `-o`, `-m`), from `case` and `[` comparisons
@@ -198,12 +205,25 @@ Caveats:
   `uname` does not drop the earlier mark.
 - Redirects to stderr, stdout, stdin, `/dev/null`, `/dev/stderr`,
   `/dev/stdout`, or `/dev/fd/N` are not install paths. A redirect such as
-  `>> "$HOME/.bashrc"` still is.
+  `>> "$HOME/.bashrc"` still is. Log-file writes are not install paths either:
+  a basename ending in `.log`, a `log` or `logs` directory, or a variable
+  whose `_` / `-` / camelCase components include `log`, `logs`, `logfile`,
+  `logdir`, or `logpath` (`LOG_FILE`, `STEP_LOG`, `stepLog`). `CATALOG`,
+  `LOGICAL`, and `LOGNAME` do not match. `install` of a file named `logtool`
+  still does. The same writes may still appear in the flow.
 - A download URL that is not an absolute `http(s)` literal is reported as
   the argument written in the script (`"$url"`). The variable is not resolved.
   A name assigned more than once is not followed. Literal URLs and written
   operands on the same command are both shown. Only URL operands are
-  searched, including `curl --url`.
+  searched, including `curl --url`. Help and version queries are not
+  downloads: `curl` `--version` / `--help` / `--manual` (and `-V` / `-h` /
+  `-M`), `wget` `--version` / `--help` (and `-V` / `-h`), `fetch`
+  `--version` / `--help`, `aria2c` `--version` / `--help` (and `-v` / `-h`),
+  and `axel` `--version` / `--help` (and `-V` / `-h`). A value of another
+  option is not one of those flags (`curl -o --version URL` still downloads).
+  `curl -k` / `--insecure` and `wget --no-check-certificate` are insecure
+  downloads only when they are flags, not when they are option values
+  (`curl -o/tmp/sdk`, `curl -H --insecure`).
 - Control characters from the script are escaped in the terminal summary and
   in stderr diagnostics, including when color is off.
   A downloader or checksum tool passed as its own argument (`run curl …`) is

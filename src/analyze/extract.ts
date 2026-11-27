@@ -13,15 +13,23 @@ import type {
   Stmt,
 } from "sh-syntax";
 
+import type { VarBinding } from "./bindings.ts";
 import {
   commandVerifies,
   disablesTlsVerification,
   flagsFromOptstring,
+  isDownloaderQuery,
   optionFlag,
   parseArgv,
+  placementDestination,
   unwrapCommand,
   urlOperands,
 } from "./commands.ts";
+import {
+  buildInstallControlContext,
+  controlsForDestination,
+} from "./install_controls.ts";
+import { isLogWriteDestination } from "./log_writes.ts";
 import {
   mergePlatformCategory,
   normalizeArchToken,
@@ -216,8 +224,17 @@ export function extractFacts(
   source: SourceMap,
   file: File,
   printerNames: ReadonlySet<string> = new Set(),
+  context: {
+    bindings?: ReadonlyMap<string, VarBinding>;
+    forwarders?: ReadonlySet<string>;
+  } = {},
 ): ExtractedFacts {
-  const collector = new Collector(source, printerNames);
+  const collector = new Collector(
+    source,
+    printerNames,
+    context.bindings ?? new Map(),
+    context.forwarders ?? new Set(),
+  );
   walk(file, (node) => {
     if (node.type === "Assign") {
       collector.noteUnameAssignment(node);
@@ -227,7 +244,7 @@ export function extractFacts(
   walk(file, (node) => {
     collector.visit(node);
   });
-  return collector.finish();
+  return collector.finish(file);
 }
 
 class Collector {
@@ -250,10 +267,20 @@ class Collector {
   readonly #unameDerived = new Map<string, PlatformCategory>();
   /** Variables assigned shell-c / privilege-runner strings (e.g. `sh_c='sudo -E sh -c'`). */
   readonly #shellRunners = new Map<string, Set<PrivilegeKind>>();
+  readonly #bindings: ReadonlyMap<string, VarBinding>;
+  /** Functions that execute their arguments (`run "$@"`, `run_root ... "$@"`). */
+  readonly #forwarders: ReadonlySet<string>;
 
-  constructor(source: SourceMap, printerNames: ReadonlySet<string>) {
+  constructor(
+    source: SourceMap,
+    printerNames: ReadonlySet<string>,
+    bindings: ReadonlyMap<string, VarBinding>,
+    forwarders: ReadonlySet<string>,
+  ) {
     this.#source = source;
     this.#printerNames = printerNames;
+    this.#bindings = bindings;
+    this.#forwarders = forwarders;
   }
 
   noteShellRunnerAssignment(node: Assign): void {
@@ -321,7 +348,18 @@ class Collector {
     }
   }
 
-  finish(): ExtractedFacts {
+  finish(file: File): ExtractedFacts {
+    const controlContext = buildInstallControlContext(
+      this.#source,
+      file,
+      this.#bindings,
+    );
+    for (const install of this.#installs) {
+      install.controls = controlsForDestination(
+        install.destination,
+        controlContext,
+      );
+    }
     for (const read of this.#reads) {
       if (this.#env.has(read.name)) continue;
       if (!/^[A-Z][A-Z0-9_]+$/.test(read.name)) continue;
@@ -569,7 +607,7 @@ class Collector {
         this.#addOption([flag.flag], flag.takesValue, node.start);
       }
     }
-    if (DOWNLOADERS.has(command)) {
+    if (DOWNLOADERS.has(command) && !isDownloaderQuery(command, args)) {
       this.#onDownload(command, rawArgs, node.start);
     }
     if (CHECKSUMS.has(command) || SIGNATURES.has(command)) {
@@ -607,6 +645,10 @@ class Collector {
     }
     if (command === "rm") this.#onRm(args, detail, node.start);
     if (PACKAGE_MANAGERS.has(command)) {
+      this.#addSideEffect("package-manager", "medium", detail, node.start);
+    } else if (
+      this.#forwarders.has(command) && executedPackageManager(args)
+    ) {
       this.#addSideEffect("package-manager", "medium", detail, node.start);
     }
     if (
@@ -691,6 +733,7 @@ class Collector {
   }
 
   #onDownload(tool: string, args: string[], start: number): void {
+    if (isDownloaderQuery(tool, args)) return;
     const found = urlsFromOperands(tool, args, this.#assignments);
     const urls = found.urls;
     const references = found.references;
@@ -746,8 +789,6 @@ class Collector {
     if (!known.has(command)) return;
     const parsed = parseArgv(command, args);
     const mode = parsed.values.get("-m") ?? parsed.values.get("--mode") ?? null;
-    const target = parsed.values.get("-t") ??
-      parsed.values.get("--target-directory") ?? null;
     const directoryMode = command === "install" &&
       parsed.flags.some((flag) => flag === "-d" || flag === "--directory");
 
@@ -771,13 +812,8 @@ class Collector {
       }
       return;
     }
-    if (target) {
-      this.#addInstall(installAction(command), target, mode, offset);
-      return;
-    }
-    if (parsed.operands.length < 2) return;
-    const destination = parsed.operands[parsed.operands.length - 1];
-    if (!destination || /^\$\{?[@*]\}?$/.test(destination)) return;
+    const destination = placementDestination(command, args);
+    if (!destination) return;
     this.#addInstall(installAction(command), destination, mode, offset);
   }
 
@@ -909,11 +945,23 @@ class Collector {
     mode: string | null,
     offset: number,
   ): void {
+    if (
+      (action === "write" || action === "append") &&
+      isLogWriteDestination(destination)
+    ) {
+      return;
+    }
     const evidence = this.#evidence(offset);
     const key = `install|${action}|${destination}|${evidence.line}`;
     if (this.#seen.has(key)) return;
     this.#seen.add(key);
-    this.#installs.push({ action, destination, mode, evidence });
+    this.#installs.push({
+      action,
+      destination,
+      mode,
+      evidence,
+      controls: [],
+    });
     if (isShellRc(destination)) {
       this.#addSideEffect("shell-rc", "medium", destination, offset);
     }
@@ -1076,6 +1124,25 @@ function isShellRc(path: string): boolean {
 
 function dynamicSeverity(text: string): Severity {
   return /curl|wget|https?:\/\//.test(text) ? "high" : "medium";
+}
+
+/**
+ * Package manager actually executed by a forwarding wrapper.
+ * Leading `$var` labels and quoted step names are not the command, so
+ * `run_root "$STEP" apt-get install ...` counts and `run echo apt-get` does not.
+ */
+function executedPackageManager(args: string[]): string | null {
+  let index = 0;
+  while (index < args.length) {
+    const word = args[index] ?? "";
+    if (word === "" || word.startsWith("$") || /\s/.test(word)) {
+      index++;
+      continue;
+    }
+    break;
+  }
+  const command = unwrapCommand(args.slice(index)).command;
+  return PACKAGE_MANAGERS.has(command) ? command : null;
 }
 
 function collectUrls(
