@@ -7,6 +7,7 @@ export type {
   EnvFact,
   Evidence,
   FlowStep,
+  InstallControl,
   InstallFact,
   IntegrityFact,
   Locale,

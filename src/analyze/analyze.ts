@@ -40,7 +40,16 @@ export async function analyze(
       : [],
   );
   const facts = parsed.file
-    ? extractFacts(source, parsed.file, printerNames)
+    ? extractFacts(source, parsed.file, printerNames, {
+      bindings: meta?.bindings,
+      forwarders: new Set(
+        meta
+          ? [...meta.functions.values()].filter((fn) => fn.forwards).map((
+            fn,
+          ) => fn.name)
+          : [],
+      ),
+    })
     : emptyFacts();
   const flow = parsed.file && meta
     ? buildFlow(source, parsed.file, meta, locale)

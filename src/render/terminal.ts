@@ -1,3 +1,4 @@
+import { formatInstallControls } from "../analyze/install_controls.ts";
 import type {
   AnalysisReport,
   Evidence,
@@ -237,10 +238,17 @@ export function renderTerminal(
   if (report.installs.length === 0) lines.push(`  ${t.none}`);
   for (const install of report.installs) {
     const mode = install.mode ? `  ${t.modeLabel(safe(install.mode))}` : "";
+    const hint = formatInstallControls(
+      install.destination,
+      install.controls,
+      new Set(),
+      locale,
+    );
+    const controls = hint ? `  ${safe(hint)}` : "";
     lines.push(
       `  - ${at(install.evidence, t)}  ${install.action}  ${
         safe(install.destination)
-      }${mode}`,
+      }${mode}${controls}`,
     );
   }
   lines.push("");

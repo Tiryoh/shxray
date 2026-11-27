@@ -91,3 +91,55 @@
    が無く、`--verbose` には `detailed flow` と `platforms` がある。
 4. カラー有効時のみ権限昇格ステップ（`sudo`
    等）が強調され、否定文（`No sudo, ...`）は強調されない。
+
+## Additional Decision
+
+- Date: 2026-11-27
+
+### Context
+
+Summary と Flow はインストール先を記述どおり出していた（`$PREFIX/bin/tool`）。同じスクリプトの `interface` は、環境変数とフラグを別の配列で、既定値があるときだけ持っていた。読む人は、どの変数やオプションを変えれば行き先が変わるのかを自分で突き合わせる必要があった。
+
+実インストーラでは、ログへの追記（`$LOG_FILE` や `install.log`）が `installs[]` と Summary の "Also writes" に混ざり、インストール先に見えた。また `run_root "$STEP" apt-get ...` のように引数を転送する関数経由の `apt-get` は、Flow では見えても `sideEffects` の `package-manager` には残らなかった。
+
+PR #1 では、オプション値を TLS フラグと誤認する件、`curl --version` をダウンロードと数える件、`cp -t` の行き先を Flow が最後の非オプション引数にしてしまう件を、フォローアップに残していた。
+
+### Decision
+
+インストール先ごとに、それを決める変数とオプション、および静的に分かる既定値を結び付ける。ログファイルへの書き込みはインストール先から外す。引数を実行する関数に渡された `apt-get` などはパッケージマネージャの副作用として数える。上の 3 件は、フラグとその値が消費する引数を区別して直す。
+
+`AnalysisReport.version` は 1 のままとする。追加したのは `installs[].controls` であり、既存フィールドの意味は変えない（ADR 0003）。
+
+### Decision Details
+
+- `installs[].controls` は、行き先の文字列が参照する変数（`kind: "environment"`）と、その変数へ代入する CLI オプション（`kind: "option"`）である。シェルの組み込みパラメータ（`HOME` や `PATH` など、`interface.environment` が元から無視している名前）は制御元にしない。
+- 既定値は、スクリプトに書かれているときだけ `defaultValue` に入れる。`${VAR:-default}` / `${VAR:=default}` は、その変数を環境変数で上書きできる（`envOverride` がその名前）。単一の静的代入は値として示すが、環境変数では上書きできないので `envOverride` は null にする。`dirname` や URL ヘルパは `defaultReason`（例: `dirname of $install_path`）に書き、経路を推測しない。
+- 既定値が静的に決まらないときは `defaultValue: null` かつ `defaultReason: "unknown default"` とする。`$OPTARG` や他の単一変数への代入も既定値にしない。このトークンはロケールにかかわらず英語のままにし、機械が照合できるようにする。要約と Flow の文はロケールに合わせる。英語の例は `Installs to $PREFIX/bin/tool (PREFIX defaults to /usr/local; override with PREFIX=... or --prefix)`。オプション自体の既定値はスクリプトに無いので、オプションの `defaultReason` は `unknown default` のままにする。
+- 同じ変数の説明は、Summary と Flow では最初の一度だけ括弧に出す。JSON の各 `installs[]` 要素には毎回 `controls` を入れる。
+- ログファイルへの `write` / `append`（リダイレクトと `tee`）は `installs[]` に入れない。したがって Summary の "Also writes" にも出ない。判定は記述どおりの経路に対して行い、変数は解決しない。次のいずれかに当たるときログとする。basename が `.log` で終わる、または `log` / `logs` / `logfile` / `logdir` / `logpath` である。それより前のパス要素が `log` または `logs` である。参照している変数名を `_`、`-`、camelCase 境界で割った要素が同じ語である（`LOG_FILE`、`STEP_LOG`、`stepLog`、`logfile`）。`CATALOG`、`LOGICAL`、`LOGNAME` は含めない。`install` / `cp` / `mv` / `ln` / `mkdir` にはこの除外を適用しない。Flow はコマンドをそのまま説明するため、ログへの書き込みが残ることがある。
+- パッケージマネージャは、コマンド名そのものに加えて、引数を実行する関数（`forwards`。例: `run` や `run_root`）の呼び出しで、実際に実行されるコマンドが `apt-get` などのときも `package-manager` とする。先頭の `$var` や空白を含む手順名はコマンドではない。`run echo apt-get` のように、別コマンドの引数として現れるだけの名前は数えない。
+- `curl -k` / `--insecure` と `wget --no-check-certificate` は、そのツール自身のフラグであるときだけ非検証ダウンロードとする。値を取るオプションが消費した残り（`curl -o/tmp/sdk` の `k`、`curl -H --insecure` の `--insecure`）と、`--` より後の引数はフラグにしない。
+- `curl --version` / `--help` / `--manual`、`wget --version` / `--help`、および `fetch` / `aria2c` / `axel` の対応するヘルプ・版表示はダウンロードにしない。`aria2c -v` は版表示であり、`curl -v` は詳細表示なのでダウンロードのままにする。`-o --version` のように値として現れるものはダウンロードのままにする。
+- `cp` / `mv` / `ln` / `install` の Flow は、`parseArgv` で `-t` / `--target-directory` を行き先にし、無いときだけ最後のオペランドに戻す。`install -d` は単一のオペランドもディレクトリ先として残す。
+
+### Alternatives Considered
+
+- `version` を 2 にする案。フィールドの削除や意味の変更ではなく、`controls` の追加なので不採用。
+- `$HOME` にも `unknown default` を付ける案。インストーラの設定ではなく、要約が毎回長くなるため不採用。
+- ログ書き込みを Flow からも消す案。Flow は実行されるコマンドの説明であり、インストール先の一覧とは役割が違うため、今回は `installs[]` と "Also writes" に限った。
+- オプションの `defaultValue` に、そのオプションが代入する変数の既定値をコピーする案。オプション自体の既定値はスクリプトに書かれていないので、推測になるため不採用。
+
+### Consequences
+
+- Summary と Flow で、行き先を変える変数・オプションと既定値が同じ括弧で読める。
+- 既定値が分からない経路は、値を埋めずに `unknown default` と出る。
+- ログファイルはインストール先の件数と "Also writes" から外れる。
+- `run_root apt-get` は `sideEffects` に残る。
+- `curl --version` だけのスクリプトは、ダウンロードによる medium リスクにならない。
+
+### Verification / Guardrails
+
+1. テストはインラインのスクリプトと `tests/fixtures/` のローカルファイルだけを使う。インストーラのネットワーク取得はしない。
+2. `tests/fixtures/installer.sh` の `$PREFIX/bin/tool` は、`PREFIX` の既定値 `/usr/local` と `--prefix` を `controls` に持つ。
+3. `get-ros2-install.sh` の `$LOG_FILE` と `$STEP_LOG` は `installs[]` と要約に出ず、`run_root ... apt-get` は `package-manager` になる。
+4. `curl -o/tmp/sdk` と `curl -H --insecure` は insecure-download にならず、`curl -k` はなる。`curl --version` はダウンロードにならない。`cp -t /usr/local/bin ./tool` の Flow は `/usr/local/bin` を行き先にする。
